@@ -12,9 +12,6 @@ logs/
 .vscode/
 .idea/
 
-# Dependency lock files
-package-lock.json
-yarn.lock
 
 # macOS-specific files
 .DS_Store
