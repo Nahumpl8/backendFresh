@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const Clientes = require('../models/clientes');
+const Clientes = require('../models/Clientes');
 const { verifyToken } = require('./verifyToken');
 
 //add new Clientes
