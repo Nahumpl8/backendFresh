@@ -85,22 +85,5 @@ router.get('/', async (req, res) => {
     }
 });
 
-//get products ordered by first lettet after split (' de ')
-
-router.get('/split', async (req, res) => {
-    try {
-        const products = await Product.find();
-        const productsOrdered = products.sort((a, b) => {
-            const aSplit = a.name.split(' de ');
-            const bSplit = b.name.split(' de ');
-            return aSplit[1].localeCompare(bSplit[1]);
-        });
-        res.status(200).json(productsOrdered);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json(err);
-    }
-});
-
 
 module.exports = router;
