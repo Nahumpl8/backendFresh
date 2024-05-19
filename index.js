@@ -9,6 +9,7 @@ const cartRoute = require('./routes/cart');
 const orderRoute = require('./routes/order');
 const clientesRoute = require('./routes/clientes');
 const pedidosRoute = require('./routes/pedidos');
+const despensasRoute = require('./routes/despensas');
 
 
 const cors = require('cors');
@@ -38,7 +39,7 @@ app.use("/api/carts", cartRoute);
 app.use("/api/orders", orderRoute);
 app.use("/api/clientes", clientesRoute);
 app.use("/api/pedidos", pedidosRoute);
-
+app.use("/api/despensas", despensasRoute);
 
 
 
