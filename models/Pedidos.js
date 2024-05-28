@@ -11,6 +11,7 @@ const PedidoSchema = new mongoose.Schema({
     total:{type:Number, required:true},
     fecha:{type:String, required:true},
     nota:{type:String, required:false},
+    reposicion:{type:String, required:false},
     envio:{type:Number, required:false},
     regalo:{type:String, required:false},
     editarPdf:{type:Boolean, required:false},
