@@ -21,3 +21,4 @@ const CartSchema = new mongoose.Schema(
 
 //timestamp is used to store the time when the Cart is created or updated
 module.exports = mongoose.model('Cart', CartSchema);
+

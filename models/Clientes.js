@@ -1,15 +1,22 @@
 const mongoose = require('mongoose');
 
 const ClientesSchema = new mongoose.Schema({
-    nombre:{type:String, required:true, unique:false},
-    direccion:{type:String, required:true, unique:false},
-    telefono:{type:String, required:true, unique:false},
-    gpsLink:{type:String, required:false},
-    pedidos:{type:Array, required:false},
-    totalPedidos:{type:Number, required:false},
-    totalGastado:{type:Number, required:false},
+    nombre: { type: String, required: true },
+    direccion: { type: String, required: true },
+    telefono: { type: String, required: true },
+    telefonoSecundario: { type: String, default: null },
+    gpsLink: { type: String },
+    pedidos: { type: Array },
+    totalPedidos: { type: Number },
+    totalGastado: { type: Number },
+    puntos: { type: Number, default: 0 },
+    semanasSeguidas: { type: Number, default: 0 },
+    regaloDisponible: { type: Boolean, default: false },
+    ultimaSemanaRegistrada: { type: String },
+    ultimaFechaPuntos: {
+        type: Date,
+        default: Date.now
+    }
+}, { timestamps: true });
 
-}, {timestamps:true});
-
-//timestamp is used to store the time when the user is created or updated
 module.exports = mongoose.model('Clientes', ClientesSchema);
