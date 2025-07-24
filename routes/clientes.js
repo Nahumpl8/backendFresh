@@ -1,6 +1,8 @@
 const router = require('express').Router();
 const Clientes = require('../models/Clientes');
 const { verifyToken } = require('./verifyToken');
+const Pedido = require('../models/Pedidos');
+
 
 // Utilidad para limpiar teléfono
 function limpiarTelefono(tel) {
@@ -34,6 +36,36 @@ router.put('/:id', async (req, res) => {
         res.status(500).json(err);
     }
 });
+
+// Obtener cliente y sus pedidos por teléfono
+router.get('/detalle/:telefono', async (req, res) => {
+  try {
+    const telefono = req.params.telefono;
+
+    // Buscar cliente por teléfono
+    const cliente = await Clientes.findOne({
+      telefono: { $regex: telefono + '$' }
+    });
+
+    if (!cliente) {
+      return res.status(404).json({ mensaje: 'Cliente no encontrado.' });
+    }
+
+    // Buscar pedidos del cliente
+    const pedidos = await Pedido.find({
+      telefono: { $regex: telefono + '$' }
+    }).sort({ fecha: -1 }); // opcional: ordenados por fecha descendente
+
+    res.json({
+      cliente,
+      pedidos
+    });
+  } catch (error) {
+    console.error('Error al obtener detalle de cliente:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 
 // Eliminar cliente
 router.delete('/:id', async (req, res) => {
@@ -157,6 +189,36 @@ router.get('/', async (req, res) => {
         console.error(err);
         res.status(500).json(err);
     }
+});
+
+
+// rutas/clientes.js o donde tengas tus rutas
+router.get('/inactivos-semana', async (req, res) => {
+  try {
+    const fechasSemana = [
+      'miércoles, 23 Julio 2025',
+      'jueves, 24 Julio 2025',
+      'viernes, 25 Julio 2025',
+      'sábado, 26 Julio 2025',
+      'domingo, 27 Julio 2025',
+    ];
+
+    // Obtener todos los pedidos con fecha de esta semana
+    const pedidosSemana = await Pedido.find({ fecha: { $in: fechasSemana } });
+
+    // Extraer teléfonos de los clientes que ya hicieron pedido
+    const telefonosActivos = pedidosSemana.map(p => p.telefono);
+
+    // Obtener todos los clientes que NO están en la lista de pedidos
+    const clientesInactivos = await Clientes.find({
+      telefono: { $nin: telefonosActivos }
+    });
+
+    res.json(clientesInactivos);
+  } catch (error) {
+    console.error('Error al obtener clientes inactivos:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
 });
 
 // Estadísticas
