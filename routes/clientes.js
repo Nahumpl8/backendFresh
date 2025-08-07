@@ -39,31 +39,31 @@ router.put('/:id', async (req, res) => {
 
 // Obtener cliente y sus pedidos por teléfono
 router.get('/detalle/:telefono', async (req, res) => {
-  try {
-    const telefono = req.params.telefono;
+    try {
+        const telefono = req.params.telefono;
 
-    // Buscar cliente por teléfono
-    const cliente = await Clientes.findOne({
-      telefono: { $regex: telefono + '$' }
-    });
+        // Buscar cliente por teléfono
+        const cliente = await Clientes.findOne({
+            telefono: { $regex: telefono + '$' }
+        });
 
-    if (!cliente) {
-      return res.status(404).json({ mensaje: 'Cliente no encontrado.' });
+        if (!cliente) {
+            return res.status(404).json({ mensaje: 'Cliente no encontrado.' });
+        }
+
+        // Buscar pedidos del cliente
+        const pedidos = await Pedido.find({
+            telefono: { $regex: telefono + '$' }
+        }).sort({ fecha: -1 }); // opcional: ordenados por fecha descendente
+
+        res.json({
+            cliente,
+            pedidos
+        });
+    } catch (error) {
+        console.error('Error al obtener detalle de cliente:', error);
+        res.status(500).json({ error: 'Error del servidor' });
     }
-
-    // Buscar pedidos del cliente
-    const pedidos = await Pedido.find({
-      telefono: { $regex: telefono + '$' }
-    }).sort({ fecha: -1 }); // opcional: ordenados por fecha descendente
-
-    res.json({
-      cliente,
-      pedidos
-    });
-  } catch (error) {
-    console.error('Error al obtener detalle de cliente:', error);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
 });
 
 
@@ -103,27 +103,27 @@ router.get('/find/:id', async (req, res) => {
 
 // Buscar cliente por nombre y teléfono (normalizado)
 router.post('/buscar', async (req, res) => {
-  let { telefono } = req.body;
-  if (!telefono) {
-    return res.status(400).json({ error: 'Teléfono es requerido.' });
-  }
-
-  const telefonoNormalizado = limpiarTelefono(telefono);
-
-  try {
-    const cliente = await Clientes.findOne({
-      telefono: { $regex: telefonoNormalizado + '$' } // termina en el número limpio
-    });
-
-    if (!cliente) {
-      return res.status(404).json({ mensaje: 'Cliente no encontrado.' });
+    let { telefono } = req.body;
+    if (!telefono) {
+        return res.status(400).json({ error: 'Teléfono es requerido.' });
     }
 
-    res.status(200).json(cliente);
-  } catch (err) {
-    console.error('Error al buscar cliente:', err);
-    res.status(500).json({ msg: 'Error del servidor', error: err });
-  }
+    const telefonoNormalizado = limpiarTelefono(telefono);
+
+    try {
+        const cliente = await Clientes.findOne({
+            telefono: { $regex: telefonoNormalizado + '$' } // termina en el número limpio
+        });
+
+        if (!cliente) {
+            return res.status(404).json({ mensaje: 'Cliente no encontrado.' });
+        }
+
+        res.status(200).json(cliente);
+    } catch (err) {
+        console.error('Error al buscar cliente:', err);
+        res.status(500).json({ msg: 'Error del servidor', error: err });
+    }
 });
 
 // Resetear puntos
@@ -194,31 +194,31 @@ router.get('/', async (req, res) => {
 
 // rutas/clientes.js o donde tengas tus rutas
 router.get('/inactivos-semana', async (req, res) => {
-  try {
-    const fechasSemana = [
-      'miércoles, 23 Julio 2025',
-      'jueves, 24 Julio 2025',
-      'viernes, 25 Julio 2025',
-      'sábado, 26 Julio 2025',
-      'domingo, 27 Julio 2025',
-    ];
+    try {
+        const fechasSemana = [
+            'miércoles, 6 Agosto 2025',
+            'jueves, 7 Agosto 2025',
+            'viernes, 8 Agosto 2025',
+            'sábado, 9 Agosto 2025',
+            'domingo, 10 Agosto 2025',
+        ];
 
-    // Obtener todos los pedidos con fecha de esta semana
-    const pedidosSemana = await Pedido.find({ fecha: { $in: fechasSemana } });
+        // Obtener todos los pedidos con fecha de esta semana
+        const pedidosSemana = await Pedido.find({ fecha: { $in: fechasSemana } });
 
-    // Extraer teléfonos de los clientes que ya hicieron pedido
-    const telefonosActivos = pedidosSemana.map(p => p.telefono);
+        // Extraer teléfonos de los clientes que ya hicieron pedido
+        const telefonosActivos = pedidosSemana.map(p => p.telefono);
 
-    // Obtener todos los clientes que NO están en la lista de pedidos
-    const clientesInactivos = await Clientes.find({
-      telefono: { $nin: telefonosActivos }
-    });
+        // Obtener todos los clientes que NO están en la lista de pedidos
+        const clientesInactivos = await Clientes.find({
+            telefono: { $nin: telefonosActivos }
+        });
 
-    res.json(clientesInactivos);
-  } catch (error) {
-    console.error('Error al obtener clientes inactivos:', error);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
+        res.json(clientesInactivos);
+    } catch (error) {
+        console.error('Error al obtener clientes inactivos:', error);
+        res.status(500).json({ error: 'Error del servidor' });
+    }
 });
 
 // Estadísticas
