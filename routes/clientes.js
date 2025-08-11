@@ -196,11 +196,11 @@ router.get('/', async (req, res) => {
 router.get('/inactivos-semana', async (req, res) => {
     try {
         const fechasSemana = [
-            'miércoles, 6 Agosto 2025',
-            'jueves, 7 Agosto 2025',
-            'viernes, 8 Agosto 2025',
-            'sábado, 9 Agosto 2025',
-            'domingo, 10 Agosto 2025',
+            'miércoles, 13 Agosto 2025',
+            'jueves, 14 Agosto 2025',
+            'viernes, 15 Agosto 2025',
+            'sábado, 16 Agosto 2025',
+            'domingo, 17 Agosto 2025',
         ];
 
         // Obtener todos los pedidos con fecha de esta semana
