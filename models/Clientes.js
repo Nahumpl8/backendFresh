@@ -16,7 +16,14 @@ const ClientesSchema = new mongoose.Schema({
     ultimaFechaPuntos: {
         type: Date,
         default: Date.now
-    }
+    },
+    ruletaTokens: { type: Number, default: 0 },
+    premiosPendientes: [{
+        source: { type: String, default: 'roulette' },
+        key: String, label: String, type: String, value: Number,
+        expiresAt: Date, redeemed: { type: Boolean, default: false },
+        spinId: { type: mongoose.Schema.Types.ObjectId, ref: 'RouletteSpin' }
+    }],
 }, { timestamps: true });
 
 module.exports = mongoose.model('Clientes', ClientesSchema);
