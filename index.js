@@ -10,6 +10,8 @@ const orderRoute = require('./routes/order');
 const clientesRoute = require('./routes/clientes');
 const pedidosRoute = require('./routes/pedidos');
 const despensasRoute = require('./routes/despensas');
+const rouletteRoutes = require('./routes/roulette');
+
 
 
 const cors = require('cors');
@@ -40,6 +42,7 @@ app.use("/api/orders", orderRoute);
 app.use("/api/clientes", clientesRoute);
 app.use("/api/pedidos", pedidosRoute);
 app.use("/api/despensas", despensasRoute);
+app.use('/api/roulette', rouletteRoutes);
 
 
 
