@@ -76,22 +76,17 @@ router.get('/eligibility/:telefono', async (req, res) => {
   }
 });
 
-// === Spin: servidor decide premio y registra ===
-// === Spin: servidor decide premio y registra (con transacción y mejores mensajes) ===
+// === Spin: servidor decide premio y registra (sin transacciones) ===
 router.post('/spin', async (req, res) => {
   try {
-    const rawTel = req.body?.telefono;
-    if (!rawTel) {
-      return res.status(400).json({ ok:false, msg:'telefono requerido' });
-    }
-
+    const rawTel = req.body?.telefono || '';
     const t = rawTel.toString().replace(/\D/g,'').replace(/^52/,'').trim();
-    const cliente = await Clientes.findOne({ telefono: { $regex: t + '$' }});
-    if (!cliente) {
-      return res.status(404).json({ ok:false, msg:'Cliente no encontrado' });
-    }
+    if (!t) return res.status(400).json({ ok:false, msg:'telefono requerido' });
 
-    // Re-evaluar elegibilidad en el momento del giro
+    const cliente = await Clientes.findOne({ telefono: { $regex: t + '$' }});
+    if (!cliente) return res.status(404).json({ ok:false, msg:'Cliente no encontrado' });
+
+    // Re-evaluar elegibilidad
     const fechasSemana = fechasSemanaPasada_MiercolesADomingo();
     const hizo = await hizoPedidoEnFechas(t, fechasSemana);
     const puntos = Number(cliente.puntos || 0);
@@ -108,78 +103,64 @@ router.post('/spin', async (req, res) => {
       });
     }
 
-    // Transacción para evitar estados parciales (que se descuente un token y luego falle algo)
-    const session = await Clientes.startSession();
-    let spinDoc;
-    await session.withTransaction(async () => {
-      // Si entra por token, consumir 1 de forma atómica
-      if (elegiblePorToken) {
-        const updated = await Clientes.findOneAndUpdate(
-          { _id: cliente._id, ruletaTokens: { $gte: 1 } },
-          { $inc: { ruletaTokens: -1 } },
-          { new: true, session }
-        );
-        if (!updated) throw new Error('NO_TOKEN_AVAILABLE');
-      }
+    // Elegir premio ponderado
+    const prize = weightedPick(PRIZES);
+    const prizeIndex = PRIZES.findIndex(p => p.key === prize.key);
 
-      // Elegir premio con pesos
-      const prize = weightedPick(PRIZES);
-      const prizeIndex = PRIZES.findIndex(p => p.key === prize.key);
-
-      // Registrar giro
-      const created = await RouletteSpin.create([{
-        telefono: t,
-        prizeKey: prize.key,
-        prizeLabel: prize.label,
-        prizeType: prize.type,
-        prizeValue: prize.value,
-        usedToken: elegiblePorToken,
-        pointsAtSpin: puntos,
-        eligibility: elegiblePorRegla ? 'rule' : 'token'
-      }], { session });
-      spinDoc = created[0];
-
-      // (Opcional) Crear premio pendiente si NO es "tryagain"
-      if (prize.type !== 'none') {
-        const expires = new Date();
-        expires.setMonth(expires.getMonth() + 1);
-
-        await Clientes.updateOne(
-          { _id: cliente._id },
-          {
-            $push: {
-              premiosPendientes: {
-                source: 'roulette',
-                key: prize.key, label: prize.label, type: prize.type, value: prize.value,
-                expiresAt: expires, redeemed: false, spinId: spinDoc._id
-              }
-            }
-          },
-          { session }
-        );
-      }
-
-      // Respuesta desde dentro de la tx (si prefieres, puedes enviar fuera usando variables)
-      res.json({
-        ok: true,
-        spinId: spinDoc._id,
-        prize: {
-          key: prize.key, label: prize.label, type: prize.type,
-          value: prize.value, index: prizeIndex
-        },
-        segments: PRIZES.map(p => ({ key:p.key, label:p.label, color:p.color }))
-      });
+    // Registrar giro (sin transacción; aceptable para este caso)
+    const spinDoc = await RouletteSpin.create({
+      telefono: t,
+      prizeKey: prize.key,
+      prizeLabel: prize.label,
+      prizeType: prize.type,
+      prizeValue: prize.value,
+      usedToken: elegiblePorToken,
+      pointsAtSpin: puntos,
+      eligibility: elegiblePorRegla ? 'rule' : 'token'
     });
-    session.endSession();
+
+    // Armar update: consumir token si entró por token + push del premio si corresponde
+    const update = {};
+    if (elegiblePorToken) {
+      update.$inc = { ruletaTokens: -1 };
+    }
+    if (prize.type !== 'none') {
+      const expires = new Date();
+      expires.setMonth(expires.getMonth() + 1);
+      update.$push = {
+        premiosPendientes: {
+          source: 'roulette',
+          key: prize.key, label: prize.label, type: prize.type, value: prize.value,
+          expiresAt: expires, redeemed: false, spinId: spinDoc._id
+        }
+      };
+    }
+
+    if (Object.keys(update).length) {
+      // Si hay que consumir token, exige que aún quede ≥1 para evitar carreras
+      const filter = elegiblePorToken
+        ? { _id: cliente._id, ruletaTokens: { $gte: 1 } }
+        : { _id: cliente._id };
+
+      const updated = await Clientes.findOneAndUpdate(filter, update, { new: true });
+      if (!updated && elegiblePorToken) {
+        // Se agotó el token justo antes de actualizar
+        return res.status(409).json({ ok:false, msg:'Sin tokens al momento de girar' });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      spinId: spinDoc._id,
+      prize: { key: prize.key, label: prize.label, type: prize.type, value: prize.value, index: prizeIndex },
+      segments: PRIZES.map(p => ({ key:p.key, label:p.label, color:p.color }))
+    });
   } catch (e) {
     console.error('SPIN_ERROR', e);
-    if (e.message === 'NO_TOKEN_AVAILABLE') {
-      return res.status(409).json({ ok:false, msg:'Sin tokens al momento de girar' });
-    }
-    // Devuelve detalle para depurar rápido en el front (quítalo si no quieres exponerlo)
     return res.status(500).json({ ok:false, msg:'Error al girar', error: e?.message || String(e) });
   }
 });
+
 
 
 // === Conceder tokens (regalos) ===
