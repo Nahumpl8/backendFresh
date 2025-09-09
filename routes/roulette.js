@@ -77,67 +77,110 @@ router.get('/eligibility/:telefono', async (req, res) => {
 });
 
 // === Spin: servidor decide premio y registra ===
+// === Spin: servidor decide premio y registra (con transacción y mejores mensajes) ===
 router.post('/spin', async (req, res) => {
   try {
-    const { telefono } = req.body;
-    if (!telefono) return res.status(400).json({ ok:false, msg:'telefono requerido' });
+    const rawTel = req.body?.telefono;
+    if (!rawTel) {
+      return res.status(400).json({ ok:false, msg:'telefono requerido' });
+    }
 
-    const t = telefono.replace(/\D/g,'').replace(/^52/,'').trim();
+    const t = rawTel.toString().replace(/\D/g,'').replace(/^52/,'').trim();
     const cliente = await Clientes.findOne({ telefono: { $regex: t + '$' }});
-    if (!cliente) return res.status(404).json({ ok:false, msg:'Cliente no encontrado' });
+    if (!cliente) {
+      return res.status(404).json({ ok:false, msg:'Cliente no encontrado' });
+    }
 
     // Re-evaluar elegibilidad en el momento del giro
     const fechasSemana = fechasSemanaPasada_MiercolesADomingo();
     const hizo = await hizoPedidoEnFechas(t, fechasSemana);
     const puntos = Number(cliente.puntos || 0);
-    const tieneToken = (cliente.ruletaTokens || 0) > 0;
+    const tokens = Number(cliente.ruletaTokens || 0);
+
     const elegiblePorRegla = (hizo && puntos > 10);
-    const elegible = elegiblePorRegla || tieneToken;
-    if (!elegible) {
-      return res.status(403).json({ ok:false, msg:'No elegible para girar' });
-    }
+    const elegiblePorToken = !elegiblePorRegla && tokens > 0;
 
-    // Si entra por token, consumirlo aquí
-    let usedToken = false;
-    if (!elegiblePorRegla && tieneToken) {
-      cliente.ruletaTokens = Math.max(0, (cliente.ruletaTokens||0) - 1);
-      usedToken = true;
-      await cliente.save();
-    }
-
-    // Elegir premio con pesos
-    const prize = weightedPick(PRIZES);
-    const prizeIndex = PRIZES.findIndex(p => p.key === prize.key);
-
-    // Registrar giro
-    const spin = await RouletteSpin.create({
-      telefono: t,
-      prizeKey: prize.key, prizeLabel: prize.label, prizeType: prize.type, prizeValue: prize.value,
-      usedToken, pointsAtSpin: puntos, eligibility: elegiblePorRegla ? 'rule' : 'token'
-    });
-
-    // (Opcional) Crear premio pendiente si NO es "tryagain"
-    if (prize.type !== 'none') {
-      const expires = new Date(); expires.setMonth(expires.getMonth()+1); // vence en 1 mes (ajústalo)
-      cliente.premiosPendientes = cliente.premiosPendientes || [];
-      cliente.premiosPendientes.push({
-        source:'roulette', key: prize.key, label: prize.label, type: prize.type, value: prize.value,
-        expiresAt: expires, redeemed: false, spinId: spin._id
+    if (!elegiblePorRegla && !elegiblePorToken) {
+      return res.status(403).json({
+        ok:false,
+        msg:'No elegible para girar',
+        detail:{ hizoPedidoSemanaPasada: hizo, puntosMayorA10: puntos > 10, tokens }
       });
-      await cliente.save();
     }
 
-    // Devolvemos info suficiente para animar el front sin que pueda “cambiar” el premio
-    res.json({
-      ok:true,
-      spinId: spin._id,
-      prize: { key: prize.key, label: prize.label, type: prize.type, value: prize.value, index: prizeIndex },
-      segments: PRIZES.map(p => ({ key:p.key, label:p.label, color:p.color })), // por si quieres dibujar desde server
+    // Transacción para evitar estados parciales (que se descuente un token y luego falle algo)
+    const session = await Clientes.startSession();
+    let spinDoc;
+    await session.withTransaction(async () => {
+      // Si entra por token, consumir 1 de forma atómica
+      if (elegiblePorToken) {
+        const updated = await Clientes.findOneAndUpdate(
+          { _id: cliente._id, ruletaTokens: { $gte: 1 } },
+          { $inc: { ruletaTokens: -1 } },
+          { new: true, session }
+        );
+        if (!updated) throw new Error('NO_TOKEN_AVAILABLE');
+      }
+
+      // Elegir premio con pesos
+      const prize = weightedPick(PRIZES);
+      const prizeIndex = PRIZES.findIndex(p => p.key === prize.key);
+
+      // Registrar giro
+      const created = await RouletteSpin.create([{
+        telefono: t,
+        prizeKey: prize.key,
+        prizeLabel: prize.label,
+        prizeType: prize.type,
+        prizeValue: prize.value,
+        usedToken: elegiblePorToken,
+        pointsAtSpin: puntos,
+        eligibility: elegiblePorRegla ? 'rule' : 'token'
+      }], { session });
+      spinDoc = created[0];
+
+      // (Opcional) Crear premio pendiente si NO es "tryagain"
+      if (prize.type !== 'none') {
+        const expires = new Date();
+        expires.setMonth(expires.getMonth() + 1);
+
+        await Clientes.updateOne(
+          { _id: cliente._id },
+          {
+            $push: {
+              premiosPendientes: {
+                source: 'roulette',
+                key: prize.key, label: prize.label, type: prize.type, value: prize.value,
+                expiresAt: expires, redeemed: false, spinId: spinDoc._id
+              }
+            }
+          },
+          { session }
+        );
+      }
+
+      // Respuesta desde dentro de la tx (si prefieres, puedes enviar fuera usando variables)
+      res.json({
+        ok: true,
+        spinId: spinDoc._id,
+        prize: {
+          key: prize.key, label: prize.label, type: prize.type,
+          value: prize.value, index: prizeIndex
+        },
+        segments: PRIZES.map(p => ({ key:p.key, label:p.label, color:p.color }))
+      });
     });
+    session.endSession();
   } catch (e) {
-    console.error(e); res.status(500).json({ ok:false, msg:'Error al girar' });
+    console.error('SPIN_ERROR', e);
+    if (e.message === 'NO_TOKEN_AVAILABLE') {
+      return res.status(409).json({ ok:false, msg:'Sin tokens al momento de girar' });
+    }
+    // Devuelve detalle para depurar rápido en el front (quítalo si no quieres exponerlo)
+    return res.status(500).json({ ok:false, msg:'Error al girar', error: e?.message || String(e) });
   }
 });
+
 
 // === Conceder tokens (regalos) ===
 router.put('/grant/:telefono', async (req, res) => {
