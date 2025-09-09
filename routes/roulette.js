@@ -4,14 +4,14 @@ const Clientes = require('../models/Clientes');
 const Pedido = require('../models/Pedidos');
 const RouletteSpin = require('../models/RouletteSpin');
 
-  // routes/roulette.js
+// routes/roulette.js
 const PRIZES = [
-  { key:"5off",    label:"$5 de descuento",       weight:22, color:"#ffd166", value:5,  type:"discount" },
-  { key:"10off",   label:"$10 de descuento",      weight:14, color:"#f4978e", value:10, type:"discount" },
-  { key:"fries",   label:"300g Papas francesa",   weight:14, color:"#a8dadc", value:1,  type:"item" },
-  { key:"chorizo", label:"250g Chorizo Huasteco", weight:12, color:"#bde0fe", value:1,  type:"item" },
-  { key:"lemon",   label:"1kg de Limón de regalo",weight:22, color:"#ffd6a5", value:1,  type:"item" },
-  { key:"25off",   label:"$25 de descuento",      weight: 6, color:"#9bf6ff", value:25, type:"discount" },
+  { key: "5off", label: "$5 de descuento", weight: 22, color: "#ffd166", value: 5, type: "discount" },
+  { key: "10off", label: "$10 de descuento", weight: 14, color: "#f4978e", value: 10, type: "discount" },
+  { key: "fries", label: "300g Papas francesa", weight: 14, color: "#a8dadc", value: 1, type: "item" },
+  { key: "chorizo", label: "250g Chorizo Huasteco", weight: 12, color: "#bde0fe", value: 1, type: "item" },
+  { key: "lemon", label: "1kg de Limón de regalo", weight: 22, color: "#ffd6a5", value: 1, type: "item" },
+  { key: "25off", label: "$25 de descuento", weight: 6, color: "#9bf6ff", value: 25, type: "discount" },
 ];
 
 // === Utilidades de fechas ===
@@ -163,17 +163,15 @@ router.post('/spin', async (req, res) => {
         const expires = new Date();
         expires.setMonth(expires.getMonth() + 1);
 
+        const premioObj = {
+          source: 'roulette',
+          key: prize.key, label: prize.label, type: prize.type, value: prize.value,
+          expiresAt: expires, redeemed: false, spinId: spinDoc._id
+        };
+
         await Clientes.updateOne(
           { _id: cliente._id },
-          {
-            $push: {
-              premiosPendientes: {
-                source: 'roulette',
-                key: prize.key, label: prize.label, type: prize.type, value: prize.value,
-                expiresAt: expires, redeemed: false, spinId: spinDoc._id
-              }
-            }
-          },
+          { $push: { premiosPendientes: JSON.stringify(premioObj) } }, // 👈 guardar como string
           { session }
         );
       }
