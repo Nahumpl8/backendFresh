@@ -4,16 +4,14 @@ const Clientes = require('../models/Clientes');
 const Pedido = require('../models/Pedidos');
 const RouletteSpin = require('../models/RouletteSpin');
 
-// === Config de premios (MISMA ORDEN que en el FRONT) ===
+  // routes/roulette.js
 const PRIZES = [
-  { key: "5off", label: "$5 de descuento", weight: 20, color: "#ffd166", value: 5, type: "discount" },
-  { key: "10off", label: "$10 de descuento", weight: 14, color: "#f4978e", value: 10, type: "discount" },
-  { key: "fries", label: "300g Papas francesa", weight: 10, color: "#a8dadc", value: 1, type: "item" },
-  { key: "chorizo", label: "250g Chorizo Huasteco", weight: 10, color: "#bde0fe", value: 1, type: "item" },
-  { key: "2xPoints", label: "Puntos x2 en 1 pedido", weight: 10, color: "#caffbf", value: 2, type: "multiplier" },
-  { key: "lemon", label: "1kg de Limón de regalo", weight: 20, color: "#ffd6a5", value: 1, type: "item" },
-  { key: "tryagain", label: "¡Suerte para la próxima!", weight: 8, color: "#f1fa8c", value: 0, type: "none" },
-  { key: "25off", label: "$25 de descuento", weight: 2, color: "#9bf6ff", value: 25, type: "discount" },
+  { key:"5off",    label:"$5 de descuento",       weight:22, color:"#ffd166", value:5,  type:"discount" },
+  { key:"10off",   label:"$10 de descuento",      weight:14, color:"#f4978e", value:10, type:"discount" },
+  { key:"fries",   label:"300g Papas francesa",   weight:14, color:"#a8dadc", value:1,  type:"item" },
+  { key:"chorizo", label:"250g Chorizo Huasteco", weight:12, color:"#bde0fe", value:1,  type:"item" },
+  { key:"lemon",   label:"1kg de Limón de regalo",weight:22, color:"#ffd6a5", value:1,  type:"item" },
+  { key:"25off",   label:"$25 de descuento",      weight: 6, color:"#9bf6ff", value:25, type:"discount" },
 ];
 
 // === Utilidades de fechas ===
