@@ -12,7 +12,7 @@ const PRIZES = [
   { key:"chorizo", label:"250g Chorizo Huasteco",weight:10, color:"#bde0fe", value:1,   type:"item" },
   { key:"2xPoints",label:"Puntos x2 en 1 pedido",weight:10, color:"#caffbf", value:2,   type:"multiplier" },
   { key:"lemon", label:"1kg de Limón de regalo",         weight:20,  color:"#ffd6a5", value:1,   type:"item" },
-  { key:"tryagain",label:"¡Suerte para la próxima!", weight:16, color:"#f1fa8c", value:0,   type:"none" },
+  { key:"tryagain",label:"¡Suerte para la próxima!", weight:8, color:"#f1fa8c", value:0,   type:"none" },
   { key:"25off",   label:"$25 de descuento",     weight:2,  color:"#9bf6ff", value:25,  type:"discount" },
 ];
 
