@@ -59,43 +59,54 @@ router.get('/eligibility/:telefono', async (req, res) => {
     const fechasSemana = fechasSemanaPasada_MiercolesADomingo();
     const hizo = await hizoPedidoEnFechas(telefono, fechasSemana);
     const puntos = Number(cliente.puntos || 0);
-    const tieneToken = (cliente.ruletaTokens || 0) > 0;
+    const tokens = Number(cliente.ruletaTokens || 0);
 
-    const elegiblePorRegla = (hizo && puntos > 10);
-    const eligible = elegiblePorRegla || tieneToken;
+    const byRule = (hizo && puntos > 10);
+    const byToken = tokens > 0;
+    const eligible = byRule || byToken;
+
+    // Política: si hay token, es gratis y se consumirá el token
+    const spinCost = byToken ? 0 : 5;
+    const canAfford = byToken ? true : puntos >= spinCost;
 
     res.json({
       ok: true,
       eligible,
-      reasons: { hizoPedidoSemanaPasada: hizo, puntosMayorA10: puntos > 10, tieneToken },
-      points: puntos, tokens: cliente.ruletaTokens || 0,
+      byRule,
+      byToken,
+      spinCost,
+      canAfford,
+      reasons: { hizoPedidoSemanaPasada: hizo, puntosMayorA10: puntos > 10, tieneToken: tokens > 0 },
+      points: puntos,
+      tokens,
+      policy: 'token_if_available',
       fechasValidas: fechasSemana
     });
   } catch (e) {
-    console.error(e); res.status(500).json({ ok: false, eligible: false, reason: 'Error del servidor' });
+    console.error(e);
+    res.status(500).json({ ok: false, eligible: false, reason: 'Error del servidor' });
   }
 });
 
 // === Spin: servidor decide premio y registra (sin transacciones) ===
 router.post('/spin', async (req, res) => {
   try {
-    const rawTel = req.body?.telefono || '';
-    const t = rawTel.toString().replace(/\D/g, '').replace(/^52/, '').trim();
-    if (!t) return res.status(400).json({ ok: false, msg: 'telefono requerido' });
+    const rawTel = req.body?.telefono;
+    if (!rawTel) return res.status(400).json({ ok: false, msg: 'telefono requerido' });
 
+    const t = rawTel.toString().replace(/\D/g, '').replace(/^52/, '').trim();
     const cliente = await Clientes.findOne({ telefono: { $regex: t + '$' } });
     if (!cliente) return res.status(404).json({ ok: false, msg: 'Cliente no encontrado' });
 
-    // Re-evaluar elegibilidad
     const fechasSemana = fechasSemanaPasada_MiercolesADomingo();
     const hizo = await hizoPedidoEnFechas(t, fechasSemana);
     const puntos = Number(cliente.puntos || 0);
     const tokens = Number(cliente.ruletaTokens || 0);
 
-    const elegiblePorRegla = (hizo && puntos > 10);
-    const elegiblePorToken = !elegiblePorRegla && tokens > 0;
+    const byRule = (hizo && puntos > 10);
+    const byToken = tokens > 0;
 
-    if (!elegiblePorRegla && !elegiblePorToken) {
+    if (!byRule && !byToken) {
       return res.status(403).json({
         ok: false,
         msg: 'No elegible para girar',
@@ -103,87 +114,93 @@ router.post('/spin', async (req, res) => {
       });
     }
 
-    // Elegir premio ponderado
-    const prize = weightedPick(PRIZES);
-    const prizeIndex = PRIZES.findIndex(p => p.key === prize.key);
+    const spinCostIfRule = 5;
 
-    // Registrar giro (sin transacción; aceptable para este caso)
-    const spinDoc = await RouletteSpin.create({
-      telefono: t,
-      prizeKey: prize.key,
-      prizeLabel: prize.label,
-      prizeType: prize.type,
-      prizeValue: prize.value,
-      usedToken: elegiblePorToken,
-      pointsAtSpin: puntos,
-      eligibility: elegiblePorRegla ? 'rule' : 'token'
-    });
+    const session = await Clientes.startSession();
+    let spinDoc, prize, prizeIndex, clienteAfter, usedToken = false, chargedPoints = 0;
 
-    // Armar update: consumir token si entró por token + push del premio si corresponde
-    const update = {};
-    if (elegiblePorToken) {
-      update.$inc = { ruletaTokens: -1 };
-    }
-    if (prize.type !== 'none') {
-      const expires = new Date();
-      expires.setMonth(expires.getMonth() + 1);
+    await session.withTransaction(async () => {
+      // 1) Intentar usar token si hay (gratis)
+      if (byToken) {
+        const updated = await Clientes.findOneAndUpdate(
+          { _id: cliente._id, ruletaTokens: { $gte: 1 } },
+          { $inc: { ruletaTokens: -1 } },
+          { new: true, session }
+        );
+        if (!updated) throw new Error('NO_TOKEN_AVAILABLE');
+        clienteAfter = updated;
+        usedToken = true;
+      } else {
+        // 2) Entra por regla: cobrar 5 puntos
+        if (puntos < spinCostIfRule) throw new Error('NO_BALANCE');
+        const updated = await Clientes.findOneAndUpdate(
+          { _id: cliente._id, puntos: { $gte: spinCostIfRule } },
+          { $inc: { puntos: -spinCostIfRule } },
+          { new: true, session }
+        );
+        if (!updated) throw new Error('NO_BALANCE');
+        clienteAfter = updated;
+        chargedPoints = spinCostIfRule;
+      }
 
-      const premioObj = {
-        source: 'roulette',
-        key: prize.key,
-        label: prize.label,
-        type: prize.type,
-        value: prize.value,
-        expiresAt: expires,
-        redeemed: false,
+      // Elegir premio
+      prize = weightedPick(PRIZES);
+      prizeIndex = PRIZES.findIndex(p => p.key === prize.key);
+
+      // Registrar spin
+      const created = await RouletteSpin.create([{
+        telefono: t,
+        prizeKey: prize.key,
+        prizeLabel: prize.label,
+        prizeType: prize.type,
+        prizeValue: prize.value,
+        usedToken,
+        pointsAtSpin: puntos,
+        eligibility: usedToken ? 'token' : 'rule'
+      }], { session });
+      spinDoc = created[0];
+
+      // Guardar premio pendiente si aplica
+      if (prize.type !== 'none') {
+        const expires = new Date();
+        expires.setMonth(expires.getMonth() + 1);
+
+        await Clientes.updateOne(
+          { _id: cliente._id },
+          {
+            $push: {
+              premiosPendientes: {
+                source: 'roulette',
+                key: prize.key, label: prize.label, type: prize.type, value: prize.value,
+                expiresAt: expires, redeemed: false, spinId: spinDoc._id
+              }
+            }
+          },
+          { session }
+        );
+      }
+
+      res.json({
+        ok: true,
         spinId: spinDoc._id,
-      };
-
-      try {
-        await Clientes.updateOne(
-          { _id: cliente._id },
-          { $push: { premiosPendientes: premioObj } }
-        );
-      } catch (err) {
-        // fallback: el schema real es String => guardamos como JSON string
-        const isCastToString =
-          err?.path === 'premiosPendientes' ||
-          err?.kind === 'string' ||
-          /Cast to .* failed/.test(String(err));
-
-        if (!isCastToString) throw err;
-
-        await Clientes.updateOne(
-          { _id: cliente._id },
-          { $push: { premiosPendientes: JSON.stringify(premioObj) } }
-        );
-      }
-    }
-
-    if (Object.keys(update).length) {
-      // Si hay que consumir token, exige que aún quede ≥1 para evitar carreras
-      const filter = elegiblePorToken
-        ? { _id: cliente._id, ruletaTokens: { $gte: 1 } }
-        : { _id: cliente._id };
-
-      const updated = await Clientes.findOneAndUpdate(filter, update, { new: true });
-      if (!updated && elegiblePorToken) {
-        // Se agotó el token justo antes de actualizar
-        return res.status(409).json({ ok: false, msg: 'Sin tokens al momento de girar' });
-      }
-    }
-
-    return res.json({
-      ok: true,
-      spinId: spinDoc._id,
-      prize: { key: prize.key, label: prize.label, type: prize.type, value: prize.value, index: prizeIndex },
-      segments: PRIZES.map(p => ({ key: p.key, label: p.label, color: p.color }))
+        prize: { key: prize.key, label: prize.label, type: prize.type, value: prize.value, index: prizeIndex },
+        segments: PRIZES.map(p => ({ key: p.key, label: p.label, color: p.color })),
+        usedToken,
+        chargedPoints,
+        pointsAfter: Number(clienteAfter.puntos || 0),
+        tokensAfter: Number(clienteAfter.ruletaTokens || 0)
+      });
     });
+
+    session.endSession();
   } catch (e) {
     console.error('SPIN_ERROR', e);
+    if (e.message === 'NO_TOKEN_AVAILABLE') return res.status(409).json({ ok: false, msg: 'Sin token disponible al momento de girar' });
+    if (e.message === 'NO_BALANCE') return res.status(409).json({ ok: false, msg: 'Saldo insuficiente para cobrar el giro' });
     return res.status(500).json({ ok: false, msg: 'Error al girar', error: e?.message || String(e) });
   }
 });
+
 
 
 
