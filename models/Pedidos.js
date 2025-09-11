@@ -19,12 +19,8 @@ const PedidoSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
-    premioUsadoLabel: { type: String, default: '' },
-    premioUsadoSpinId: { type: String, default: '' }, // si quieres, usa ObjectId con ref: 'RouletteSpin'
-    premioUsadoType: { type: String, enum: ['discount', 'item', 'multiplier', 'none', ''], default: '' },
-    premioUsadoValue: { type: Number, default: 0 },
-    premioDescuentoAplicado: { type: Number, default: 0 },
-    puntosDoble: { type: Boolean, default: false },
+    regaloRuleta: { type: String, default: "" },        // ej. "1kg de Limón de regalo"
+    regaloRuletaSpinId: { type: String, default: "" },
 },
     { timestamps: true }
 );
