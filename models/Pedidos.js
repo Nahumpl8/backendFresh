@@ -18,7 +18,10 @@ const PedidoSchema = new mongoose.Schema({
     puntosUsados: {
         type: Number,
         default: 0
-    }
+    },
+    regaloRuletaLabel: { type: String, default: null },   // ej: "$10 de descuento" o "1kg de Limón"
+    regaloRuletaDescuento: { type: Number, default: 0 },  // si fue descuento, cuánto se descontó
+    ruletaSpinId: { type: String, default: null },
 },
     { timestamps: true }
 );
