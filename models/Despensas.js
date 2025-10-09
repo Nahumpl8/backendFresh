@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const DespensasSchema = new mongoose.Schema({
     name:{type: String, required:true, unique:true},
+    img:{type: String, required:true},
     price:{type: Number, required:true},
     products:{type: Array},
     }, 
