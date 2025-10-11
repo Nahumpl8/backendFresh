@@ -10,6 +10,7 @@ const ProductSchema = new mongoose.Schema({
     minUnit:{type: Number, required:true},
     unit:{type: String, required:true},
     inStock:{type: Boolean, default:true},
+    showInWeb:{type: Boolean, default:true},
     cost:{type: Number, required:false},
     }, 
     {timestamps:true}
