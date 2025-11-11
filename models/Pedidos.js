@@ -24,6 +24,6 @@ const PedidoSchema = new mongoose.Schema({
 },
     { timestamps: true }
 );
-
+    
 //timestamp is used to store the time when the Pedido is created or updated
 module.exports = mongoose.model('Pedido', PedidoSchema);
