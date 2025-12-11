@@ -6,6 +6,7 @@ const DespensasSchema = new mongoose.Schema({
     price:{type: Number, required:true},
     products:{type: Array},
     allowChanges:{type: Boolean, default:true},
+    showInWeb:{type: Boolean, default:true}
     }, 
     {timestamps:true}
 );
