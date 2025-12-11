@@ -5,6 +5,7 @@ const DespensasSchema = new mongoose.Schema({
     img:{type: String, required:true},
     price:{type: Number, required:true},
     products:{type: Array},
+    allowChanges:{type: Boolean, default:true},
     }, 
     {timestamps:true}
 );
