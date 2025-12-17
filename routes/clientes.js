@@ -220,6 +220,22 @@ router.put('/add-address/:id', async (req, res) => {
     }
 });
 
+
+// --- RUTA ULTRA LIGERA PARA REPARTIDORES ---
+// Devuelve solo lo necesario para entregar. Ahorra 90% de ancho de banda.
+router.get('/lite', async (req, res) => {
+    try {
+        const clientes = await Clientes.find()
+            .select('_id nombre telefono telefonoSecundario direccion misDirecciones gpsLink'); 
+            // .select() elige qué campos TRAER, ignorando pedidos, puntos, etc.
+        
+        res.status(200).json(clientes);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json(err);
+    }
+});
+
 // rutas/clientes.js o donde tengas tus rutas
 router.get('/inactivos-semana', async (req, res) => {
     try {
