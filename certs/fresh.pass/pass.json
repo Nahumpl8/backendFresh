@@ -1,0 +1,24 @@
+{
+  "formatVersion": 1,
+  "passTypeIdentifier": "pass.com.freshmarket.pachuca",
+  "serialNumber": "12345678",
+  "teamIdentifier": "L4P8PF94N6",
+  "organizationName": "Fresh Market",
+  "description": "Tarjeta de Lealtad Fresh Market",
+  "logoText": "Fresh Market",
+  "foregroundColor": "rgb(255, 255, 255)",
+  "backgroundColor": "rgb(34, 139, 34)",
+  "labelColor": "rgb(200, 255, 200)",
+  "storeCard": {
+    "primaryFields": [],
+    "secondaryFields": [],
+    "auxiliaryFields": [],
+    "backFields": []
+  },
+  "barcode": {
+    "format": "PKBarcodeFormatQR",
+    "message": "12345678",
+    "messageEncoding": "iso-8859-1",
+    "altText": "Escanea en entrega"
+  }
+}

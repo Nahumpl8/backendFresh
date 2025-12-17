@@ -191,6 +191,34 @@ router.get('/', async (req, res) => {
     }
 });
 
+// --- RUTA NUEVA: AGREGAR DIRECCIÓN EXTRA ---
+router.put('/add-address/:id', async (req, res) => {
+    try {
+        const { alias, direccion, gpsLink } = req.body;
+
+        // Validamos que venga al menos la dirección
+        if (!direccion) return res.status(400).json("Falta la dirección");
+
+        const clienteActualizado = await Clientes.findByIdAndUpdate(
+            req.params.id,
+            {
+                $push: {
+                    misDirecciones: {
+                        alias: alias || 'Nueva Dirección', // Si no mandas alias, pone uno default
+                        direccion: direccion,
+                        gpsLink: gpsLink || ''
+                    }
+                }
+            },
+            { new: true } // Devuelve el cliente ya actualizado para ver el cambio
+        );
+
+        res.status(200).json(clienteActualizado);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json(err);
+    }
+});
 
 // rutas/clientes.js o donde tengas tus rutas
 router.get('/inactivos-semana', async (req, res) => {

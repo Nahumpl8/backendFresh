@@ -4,6 +4,13 @@ const ClientesSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
     direccion: { type: String, required: true },
     telefono: { type: String, required: true },
+    pin: { type: String }, // Aquí guardaremos el hash, no el numero directo
+    sellos: { type: Number, default: 0 }, // Tu nueva variable para wallets
+    misDirecciones: [{
+        alias: String,
+        direccion: String,
+        gpsLink: String
+    }],
     telefonoSecundario: { type: String, default: null },
     gpsLink: { type: String },
     pedidos: { type: Array },
