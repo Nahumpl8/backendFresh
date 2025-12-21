@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { PKPass } = require('passkit-generator');
-const Clientes = require('../models/Clientes'); // Asegúrate que la mayúscula coincida con tu archivo
+const Clientes = require('../models/Clientes');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const WEB_SERVICE_URL = process.env.WEB_SERVICE_URL || 'https://tu-app-railway.app/api/wallet';
 const WALLET_SECRET = process.env.WALLET_SECRET || 'fresh-market-secret-key-2025';
 
-// Helper para limpiar nombres (Smart Name)
+// Helper para limpiar nombres
 function formatSmartName(fullName) {
     if (!fullName) return "Cliente Fresh";
     const words = fullName.trim().split(/\s+/);
@@ -47,7 +47,7 @@ router.get('/apple/:clientId', async (req, res) => {
 
         // 2. RUTAS DE ARCHIVOS
         const baseDir = path.resolve(__dirname, '../assets/freshmarket');
-        const certsDir = path.resolve(__dirname, '../certs'); // Ojo: verifica si es ../certs o ../assets/freshmarket/certs según tu estructura final
+        const certsDir = path.resolve(__dirname, '../certs');
         const nivelesDir = path.join(baseDir, 'niveles');
 
         // 3. LEER CERTIFICADOS
@@ -55,30 +55,48 @@ router.get('/apple/:clientId', async (req, res) => {
         const signerCert = fs.readFileSync(path.join(certsDir, 'signerCert.pem'));
         const signerKey = fs.readFileSync(path.join(certsDir, 'signerKey.pem'));
 
-        // 4. LÓGICA DE DATOS (Puntos + Sellos)
-        // A) Sellos (Para la imagen y meta semanal)
-        let numSellos = cliente.sellos || 0;
-        if (numSellos > 10) numSellos = 10;
+        // 4. LÓGICA DE DATOS (NUEVA LÓGICA DE 8 SELLOS)
 
-        // B) Puntos (Para el Header - Dinero acumulado)
+        // A) Sellos
+        let numSellos = cliente.sellos || 0;
+        // Tope máximo ahora es 8
+        if (numSellos > 8) numSellos = 8;
+
+        // B) Puntos
         let numPuntos = cliente.puntos || 0;
 
-        // Determinar el nivel
-        let level = 'Cliente Fresh';
-        if (numSellos >= 10) level = 'Fresh Legend';
-        else if (numSellos >= 5) level = 'Cliente Frecuente';
+        // C) Nivel y Estado
+        let statusText = 'Cliente Fresh';
+        if (numSellos >= 8) {
+            statusText = '🎁 PREMIO DISPONIBLE ($90)';
+        } else if (numSellos === 0) {
+            statusText = '🌟 BIENVENIDO';
+        }
+
+        // D) Lógica de Bienvenida (Plátano Gratis)
+        // Usaremos el campo Primary para destacar esto si es nuevo
+        let welcomeField = null;
+        if (numSellos === 0) {
+            welcomeField = {
+                key: "welcome_gift",
+                label: "REGALO DE BIENVENIDA",
+                value: "🍌 1kg Plátano GRATIS",
+                textAlignment: "PKTextAlignmentCenter"
+            };
+        }
 
         // Buscamos la imagen dinámica (ej: "3-sello.png")
+        // Asegúrate de tener imágenes del 0 al 8 en tu carpeta niveles
         const stripFilename = `${numSellos}-sello.png`;
         const stripPath = path.join(nivelesDir, stripFilename);
         const finalStripPath = fs.existsSync(stripPath) ? stripPath : path.join(nivelesDir, '0-sello.png');
 
-        // 5. TOKEN PUSH (Seguridad)
+        // 5. TOKEN PUSH
         const authToken = crypto.createHmac('sha256', WALLET_SECRET)
             .update(cliente._id.toString())
             .digest('hex');
 
-        // 6. PREPARAR BUFFERS DE IMÁGENES
+        // 6. BUFFERS
         const buffers = {
             'icon.png': fs.readFileSync(path.join(baseDir, 'icon.png')),
             'icon@2x.png': fs.readFileSync(path.join(baseDir, 'icon.png')),
@@ -93,50 +111,52 @@ router.get('/apple/:clientId', async (req, res) => {
         // 7. CONSTRUIR JSON
         const passJson = {
             formatVersion: 1,
-            passTypeIdentifier: "pass.com.freshmarket.pachuca",
+            passTypeIdentifier: "pass.com.freshmarket.pachuca", // Asegúrate que este ID coincida con tus certificados nuevos
             serialNumber: `FRESH-${cliente._id}`,
             teamIdentifier: "L4P8PF94N6",
             organizationName: "Fresh Market",
             description: "Tarjeta de Lealtad",
             logoText: "Fresh Market",
 
-            // 🎨 COLORES (Optimizados para fondo verde)
-            foregroundColor: "rgb(255, 255, 255)", // Blanco (Texto de valores)
-            backgroundColor: "rgb(34, 139, 34)",   // Verde Fresh
-            labelColor: "rgb(200, 255, 200)",      // Verde muy claro (Para que las etiquetas "SELLOS" se lean bien)
+            foregroundColor: "rgb(255, 255, 255)",
+            backgroundColor: "rgb(34, 139, 34)",
+            labelColor: "rgb(200, 255, 200)",
 
             webServiceURL: WEB_SERVICE_URL,
             authenticationToken: authToken,
 
+            // 📍 GEOLOCALIZACIÓN
+            // Aquí puedes poner tu bodega en Pachuca o zonas clave
             locations: [
                 {
                     latitude: 20.102220,
                     longitude: -98.761820,
-                    relevantText: "¡Hola Fresh Marketero! No olvides pedir tu despensa 🥕"
+                    relevantText: "🥕 ¿Hiciste el súper? Fresh Market está cerca."
                 }
             ],
 
             storeCard: {
-                // 🔥 HEADER: Aquí van los PUNTOS (Globales)
+                // HEADER: Puntos
                 headerFields: [
                     {
                         key: "puntos_header",
                         label: "MIS PUNTOS",
-                        value: numPuntos.toString(), // Muestra solo el número
+                        value: numPuntos.toString(),
                         textAlignment: "PKTextAlignmentRight"
                     }
                 ],
 
-                // PRIMARY: Vacío (para que luzca la imagen Strip)
-                primaryFields: [],
+                // PRIMARY: Regalo de Bienvenida (Solo aparece si tiene 0 sellos)
+                primaryFields: welcomeField ? [welcomeField] : [],
 
-                // SECONDARY: Aquí van los SELLOS (Semana) y el NOMBRE
+                // SECONDARY: Sellos
                 secondaryFields: [
                     {
                         key: 'balance_sellos',
                         label: 'SELLOS',
-                        value: `${numSellos}/10`,
-                        textAlignment: "PKTextAlignmentLeft"
+                        value: `${numSellos}/8`, // Actualizado a 8
+                        textAlignment: "PKTextAlignmentLeft",
+                        changeMessage: '¡Tu pedido ha llegado! 🥕 Ahora tienes %@ sellos.'
                     },
                     {
                         key: 'name',
@@ -146,53 +166,47 @@ router.get('/apple/:clientId', async (req, res) => {
                     }
                 ],
 
-                // AUXILIARY: Estatus
+                // AUXILIARY: Estatus del Premio
                 auxiliaryFields: [
                     {
                         key: "status_premio",
                         label: "ESTATUS",
-                        value: numSellos >= 10 ? "🎁 PREMIO DISPONIBLE" : level,
+                        value: statusText,
                         textAlignment: "PKTextAlignmentCenter"
                     }
                 ],
 
-                // BACKFIELDS: Info y WhatsApp
+                // BACKFIELDS
                 backFields: [
                     {
                         key: 'quick_links',
-                        label: '📱 SÍGUENOS en redes',
-                        value: '📸 Instagram:\nhttps://www.instagram.com/fresh_marketp\n🤩 Facebook:\nhttps://www.facebook.com/freshmarketp/\n📝 Haz tu pedido:\nhttps://www.wa.me/5217712346620',
+                        label: '📱 HAZ TU PEDIDO',
+                        value: '📝 WhatsApp Pedidos:\nhttps://www.wa.me/5217712346620\n📸 Instagram:\nhttps://www.instagram.com/fresh_marketp\n🤩 Facebook:\nhttps://www.facebook.com/freshmarketp/',
                         textAlignment: 'PKTextAlignmentLeft'
                     },
                     {
                         key: 'weekly_promo',
-                        label: '🥕 NOVEDADES Fresh Market 🔔',
-                        value: '¡Bienvenido a la comunidad Fresh Market! 🙌🍌\nMantente atento a este espacio: aquí publicaremos promociones relámpago y regalos exclusivos cada semana.',
+                        label: '🥕 NOVEDADES SEMANALES',
+                        value: '¡Bienvenido a la comunidad Fresh Market! 🍌\nRevisa nuestras historias de Instagram para ver las frutas de temporada.',
                         changeMessage: '%@'
                     },
                     {
                         key: 'how_it_works',
-                        label: '🙌 CÓMO FUNCIONA',
-                        value: '☕ Recibe 1 sello por cada compra mayor a $285.\n🎉 Al juntar 5 sellos, ¡tenemos un regalo!\n🎁 Al juntar 10 sellos llevate un producto especial.\n🎂 Regalo especial en tu cumpleaños.',
+                        label: '🙌 TU BENEFICIO FRESH',
+                        value: '1️⃣ Recibe 1 sello por cada pedido entregado.\n2️⃣ Al juntar 8 sellos, ¡tu siguiente pedido tiene PREMIO!\n🎁 El 9º pedido incluye un producto con valor de hasta $90.\n🍌 Regalo de bienvenida: 1kg de Plátano en tu 1er pedido.',
                         textAlignment: 'PKTextAlignmentLeft'
                     },
                     {
                         key: 'account_info',
                         label: '🫶 TITULAR',
-                        value: `${nombreLimpio}\nNivel: ${level}`,
+                        value: `${nombreLimpio}\nID: FRESH-${cliente._id.toString().slice(-4)}`,
                         textAlignment: 'PKTextAlignmentRight'
                     },
                     {
                         key: 'contact_footer',
                         label: '📞 CONTACTO',
-                        value: 'Tel: 7712346620\nWeb: https://www.freshmarket.mx\nEntregamos en todo Pachuca.\n© 2025 Fresh Market 🥩\n\nPowered by Passio',
+                        value: 'Tel: 7712346620\nEntregamos en todo Pachuca y Mineral de la Reforma.\n© 2025 Fresh Market 🥩',
                         textAlignment: 'PKTextAlignmentLeft'
-                    },
-                    {
-                        key: 'last_update',
-                        label: '⏰ Actualizado',
-                        value: new Date().toLocaleString('es-MX', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }),
-                        textAlignment: 'PKTextAlignmentRight'
                     }
                 ]
             },
@@ -203,6 +217,8 @@ router.get('/apple/:clientId', async (req, res) => {
                 altText: nombreLimpio
             }
         };
+
+        // ... resto del código de generación de pass (igual) ...
 
         const finalBuffers = {
             ...buffers,
@@ -222,7 +238,7 @@ router.get('/apple/:clientId', async (req, res) => {
         res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
 
         res.send(buffer);
-        console.log(`✅ Pase generado para ${nombreLimpio} (Puntos: ${numPuntos}, Sellos: ${numSellos})`);
+        console.log(`✅ Pase generado para ${nombreLimpio} (Sellos: ${numSellos}/8)`);
 
     } catch (err) {
         console.error("❌ ERROR:", err);
