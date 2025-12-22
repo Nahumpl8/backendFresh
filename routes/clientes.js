@@ -240,11 +240,13 @@ router.get('/lite', async (req, res) => {
 router.get('/inactivos-semana', async (req, res) => {
     try {
         const fechasSemana = [
-            'miércoles, 17 Diciembre 2025',
-            'jueves, 18 Diciembre 2025',
-            'viernes, 19 Diciembre 2025',
-            'sábado, 20 Diciembre 2025',
-            'domingo, 21 Diciembre 2025',
+            'lunes, 22 Diciembre 2025',
+            'martes, 23 Diciembre 2025',
+            'miércoles, 24 Diciembre 2025',
+            'jueves, 25 Diciembre 2025',
+            'viernes, 26 Diciembre 2025',
+            'sábado, 27 Diciembre 2025',
+            'domingo, 28 Diciembre 2025',
         ];
 
         // Obtener todos los pedidos con fecha de esta semana

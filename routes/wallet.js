@@ -147,7 +147,7 @@ router.get('/apple/:clientId', async (req, res) => {
                 ],
 
                 // PRIMARY: Regalo de Bienvenida (Solo aparece si tiene 0 sellos)
-                primaryFields: welcomeField ? [welcomeField] : [],
+                primaryFields: [],
 
                 // SECONDARY: Sellos
                 secondaryFields: [
