@@ -68,7 +68,7 @@ router.get('/apple/:clientId', async (req, res) => {
         // C) Nivel y Estado
         let statusText = 'Cliente Fresh';
         if (numSellos >= 8) {
-            statusText = '🎁 PREMIO DISPONIBLE ($90)';
+            statusText = '🎁 PREMIO DISPONIBLE ($100)';
         } else if (numSellos === 0) {
             statusText = '🌟 BIENVENIDO';
         }
@@ -131,7 +131,7 @@ router.get('/apple/:clientId', async (req, res) => {
                 {
                     latitude: 20.102220,
                     longitude: -98.761820,
-                    relevantText: "🥕 ¿Hiciste el súper? Fresh Market está cerca."
+                    relevantText: "🥕 ¿Ya pediste tu despensa? Fresh Market te espera, escríbenos al 7712346620."
                 }
             ],
 
