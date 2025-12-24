@@ -5,35 +5,54 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-const SERVICE_ACCOUNT = require('../keys.json');
+
+// ==========================================
+// 🔐 CARGA DE CREDENCIALES (MODO SEGURO)
+// ==========================================
+let SERVICE_ACCOUNT = null;
+
+try {
+    if (process.env.GOOGLE_KEY_JSON) {
+        console.log("✅ [Wallet] Usando credenciales desde Variable de Entorno (Railway)");
+        SERVICE_ACCOUNT = JSON.parse(process.env.GOOGLE_KEY_JSON);
+    } else {
+        console.log("⚠️ [Wallet] No hay variable de entorno, buscando archivo local...");
+        // Intentamos cargar el archivo solo si existe
+        const keyPath = path.join(__dirname, '../keys.json');
+        if (fs.existsSync(keyPath)) {
+            SERVICE_ACCOUNT = require('../keys.json');
+            console.log("✅ [Wallet] Archivo keys.json local cargado.");
+        } else {
+            console.error("❌ [Wallet] ERROR: No se encontró ni la Variable GOOGLE_KEY_JSON ni el archivo keys.json");
+        }
+    }
+} catch (err) {
+    console.error("❌ [Wallet] Error procesando las credenciales:", err.message);
+}
 
 // ==========================================
 // ⚙️ CONFIGURACIÓN GENERAL
 // ==========================================
-// ⚠️ IMPORTANTE: Asegúrate de que esta URL sea la raíz de tu servidor en Railway
-// Ejemplo: 'https://backendfresh-production.up.railway.app' (sin la barra al final)
 const BASE_URL = process.env.BASE_URL || 'https://backendfresh-production.up.railway.app';
-
 const WEB_SERVICE_URL = `${BASE_URL}/api/wallet`;
 const WALLET_SECRET = process.env.WALLET_SECRET || 'fresh-market-secret-key-2025';
 
-// GOOGLE CONSTANTES
 const GOOGLE_ISSUER_ID = '3388000000023046225';
 const GOOGLE_CLASS_ID = `${GOOGLE_ISSUER_ID}.fresh_market_loyal`;
 
-// Helper para limpiar nombres
 function formatSmartName(fullName) {
     if (!fullName) return "Cliente Fresh";
     const words = fullName.trim().split(/\s+/);
     if (words.length <= 2) return fullName;
     let shortName = words[0];
-    return shortName + " " + words.slice(1).join(" "); // Simplificado
+    return shortName + " " + words.slice(1).join(" ");
 }
 
 // ==========================================
 // 🍏 APPLE WALLET ENDPOINT
 // ==========================================
 router.get('/apple/:clientId', async (req, res) => {
+    // ... (Tu código de Apple se queda igual, no lo toques)
     try {
         const { clientId } = req.params;
         const cliente = await Clientes.findById(clientId);
@@ -55,7 +74,6 @@ router.get('/apple/:clientId', async (req, res) => {
         if (numSellos >= 8) statusText = '🎁 PREMIO DISPONIBLE ($100)';
         else if (numSellos === 0) statusText = '🌟 BIENVENIDO';
 
-        // Lógica de Imagen Local (Buffer)
         const stripFilename = `${numSellos}-sello.png`;
         const stripPath = path.join(nivelesDir, stripFilename);
         const finalStripPath = fs.existsSync(stripPath) ? stripPath : path.join(nivelesDir, '0-sello.png');
@@ -120,17 +138,19 @@ router.get('/apple/:clientId', async (req, res) => {
 // ==========================================
 router.get('/google/:clientId', async (req, res) => {
     try {
+        // VALIDACIÓN DE SEGURIDAD
+        if (!SERVICE_ACCOUNT) {
+            return res.status(500).send("Error de configuración: No hay credenciales de Google Wallet.");
+        }
+
         const { clientId } = req.params;
         const cliente = await Clientes.findById(clientId);
         if (!cliente) return res.status(404).send("Cliente no encontrado");
 
-        // 1. Calcular Sellos (Igual que en Apple)
         let numSellos = cliente.sellos || 0;
         if (numSellos > 8) numSellos = 8;
 
-        // 2. Generar la URL PÚBLICA de la imagen
-        // Asumiendo que configuraste 'app.use('/public', ...)' en index.js
-        // La URL final será algo como: https://tu-app.railway.app/public/freshmarket/niveles/3-sello.png
+        // URL PÚBLICA DE LA IMAGEN
         const imageName = `${numSellos}-sello.png`;
         const heroImageUrl = `${BASE_URL}/public/freshmarket/niveles/${imageName}`;
 
@@ -159,18 +179,11 @@ router.get('/google/:clientId', async (req, res) => {
                         label: 'Puntos',
                         balance: { string: (cliente.puntos || 0).toString() }
                     },
-                    // 3. ⚠️ AQUÍ SOBRESCRIBIMOS LA IMAGEN DE LA CLASE
                     heroImage: {
                         sourceUri: {
                             uri: heroImageUrl
                         }
-                    },
-                    // Opcional: Agregar texto de estatus arriba
-                    textModulesData: [{
-                        header: "Nivel de Sellos",
-                        body: `Tienes ${numSellos} de 8 sellos acumulados 🥕`,
-                        id: "status_sellos"
-                    }]
+                    }
                 }]
             }
         };
