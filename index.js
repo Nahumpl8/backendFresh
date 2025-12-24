@@ -1,6 +1,7 @@
 const express = require('express');
 const app = express();
 const mongoose = require('mongoose');
+const path = require('path');
 const dotenv = require('dotenv');
 app.use('/public', express.static(path.join(__dirname, 'assets')));
 const userRoute = require('./routes/users');
