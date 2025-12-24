@@ -1,6 +1,8 @@
 # Dependency directories
 node_modules/
 
+keys.json
+
 # Environment variables file
 .env
 

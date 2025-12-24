@@ -2,6 +2,7 @@ const express = require('express');
 const app = express();
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
+app.use('/public', express.static(path.join(__dirname, 'assets')));
 const userRoute = require('./routes/users');
 const authRoute = require('./routes/auth');
 const productRoute = require('./routes/product');
