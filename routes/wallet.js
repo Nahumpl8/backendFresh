@@ -7,28 +7,21 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 
 // ==========================================
-// 🔐 CARGA DE CREDENCIALES (MODO SEGURO)
+// 🔐 CARGA DE CREDENCIALES
 // ==========================================
 let SERVICE_ACCOUNT = null;
-
 try {
     if (process.env.GOOGLE_KEY_JSON) {
-        console.log("✅ [Wallet] Usando credenciales desde Variable de Entorno (Railway)");
+        console.log("✅ [Wallet] Usando credenciales (Railway)");
         SERVICE_ACCOUNT = JSON.parse(process.env.GOOGLE_KEY_JSON);
     } else {
-        console.log("⚠️ [Wallet] No hay variable de entorno, buscando archivo local...");
-        // Intentamos cargar el archivo solo si existe
         const keyPath = path.join(__dirname, '../keys.json');
         if (fs.existsSync(keyPath)) {
             SERVICE_ACCOUNT = require('../keys.json');
-            console.log("✅ [Wallet] Archivo keys.json local cargado.");
-        } else {
-            console.error("❌ [Wallet] ERROR: No se encontró ni la Variable GOOGLE_KEY_JSON ni el archivo keys.json");
+            console.log("✅ [Wallet] Usando keys.json local.");
         }
     }
-} catch (err) {
-    console.error("❌ [Wallet] Error procesando las credenciales:", err.message);
-}
+} catch (err) { console.error("❌ Error credenciales:", err.message); }
 
 // ==========================================
 // ⚙️ CONFIGURACIÓN GENERAL
@@ -38,7 +31,11 @@ const WEB_SERVICE_URL = `${BASE_URL}/api/wallet`;
 const WALLET_SECRET = process.env.WALLET_SECRET || 'fresh-market-secret-key-2025';
 
 const GOOGLE_ISSUER_ID = '3388000000023046225';
-const GOOGLE_CLASS_ID = `${GOOGLE_ISSUER_ID}.fresh_market_loyal`;
+
+// Definimos las DOS clases de Google
+const CLASS_NORMAL = `${GOOGLE_ISSUER_ID}.fresh_market_loyal`;
+// ⚠️ CORRECCIÓN AQUÍ: Debe coincidir con tu script setupLegendClass.js
+const CLASS_LEGEND = `${GOOGLE_ISSUER_ID}.fresh_market_legend`; 
 
 function formatSmartName(fullName) {
     if (!fullName) return "Cliente Fresh";
@@ -52,35 +49,46 @@ function formatSmartName(fullName) {
 // 🍏 APPLE WALLET ENDPOINT
 // ==========================================
 router.get('/apple/:clientId', async (req, res) => {
-    // ... (Tu código de Apple se queda igual, no lo toques)
     try {
         const { clientId } = req.params;
         const cliente = await Clientes.findById(clientId);
         if (!cliente) return res.status(404).json({ error: "Cliente no encontrado" });
 
+        // Directorios
         const baseDir = path.resolve(__dirname, '../assets/freshmarket');
         const certsDir = path.resolve(__dirname, '../certs');
         const nivelesDir = path.join(baseDir, 'niveles');
 
+        // Certificados
         const wwdr = fs.readFileSync(path.join(certsDir, 'wwdr.pem'));
         const signerCert = fs.readFileSync(path.join(certsDir, 'signerCert.pem'));
         const signerKey = fs.readFileSync(path.join(certsDir, 'signerKey.pem'));
 
+        // Lógica Sellos
         let numSellos = cliente.sellos || 0;
         if (numSellos > 8) numSellos = 8;
         let numPuntos = cliente.puntos || 0;
 
         let statusText = 'Cliente Fresh';
-        if (numSellos >= 8) statusText = '🎁 PREMIO DISPONIBLE ($100)';
-        else if (numSellos === 0) statusText = '🌟 BIENVENIDO';
+        if (numSellos >= 8) statusText = '🎁 Premio disponible';
+        else if (numSellos === 0) statusText = '🌟 Bienvenido';
 
+        // 🎨 LOGICA DE COLOR APPLE
+        // Verde normal: rgb(34, 139, 34)
+        // Naranja Legend: rgb(249, 115, 22)
+        let appleBackgroundColor = "rgb(34, 139, 34)";
+        if (numSellos > 5) {
+            appleBackgroundColor = "rgb(249, 115, 22)"; // Naranja
+            if (numSellos < 8) statusText = '🔥 ¡YA CASI LLEGAS!';
+        }
+
+        // Imagen dinámica
         const stripFilename = `${numSellos}-sello.png`;
         const stripPath = path.join(nivelesDir, stripFilename);
         const finalStripPath = fs.existsSync(stripPath) ? stripPath : path.join(nivelesDir, '0-sello.png');
 
-        const authToken = crypto.createHmac('sha256', WALLET_SECRET)
-            .update(cliente._id.toString())
-            .digest('hex');
+        const authToken = crypto.createHmac('sha256', WALLET_SECRET).update(cliente._id.toString()).digest('hex');
+        const nombreLimpio = formatSmartName(cliente.nombre);
 
         const buffers = {
             'icon.png': fs.readFileSync(path.join(baseDir, 'icon.png')),
@@ -91,8 +99,6 @@ router.get('/apple/:clientId', async (req, res) => {
             'strip@2x.png': fs.readFileSync(finalStripPath)
         };
 
-        const nombreLimpio = formatSmartName(cliente.nombre);
-
         const passJson = {
             formatVersion: 1,
             passTypeIdentifier: "pass.com.freshmarket.pachuca",
@@ -102,21 +108,21 @@ router.get('/apple/:clientId', async (req, res) => {
             description: "Tarjeta de Lealtad",
             logoText: "Fresh Market",
             foregroundColor: "rgb(255, 255, 255)",
-            backgroundColor: "rgb(34, 139, 34)",
-            labelColor: "rgb(200, 255, 200)",
+            backgroundColor: appleBackgroundColor, // Color Dinámico
+            labelColor: "rgb(230, 255, 230)",
             webServiceURL: WEB_SERVICE_URL,
             authenticationToken: authToken,
             locations: [{ latitude: 20.102220, longitude: -98.761820, relevantText: "🥕 Fresh Market te espera." }],
             storeCard: {
                 headerFields: [{ key: "puntos_header", label: "MIS PUNTOS", value: numPuntos.toString(), textAlignment: "PKTextAlignmentRight" }],
                 secondaryFields: [
-                    { key: 'balance_sellos', label: 'SELLOS', value: `${numSellos}/8`, textAlignment: "PKTextAlignmentLeft", changeMessage: '¡Nueva actualización! Tienes %@ sellos.' },
+                    { key: 'balance_sellos', label: 'SELLOS', value: `${numSellos}/8`, textAlignment: "PKTextAlignmentLeft" },
                     { key: 'name', label: 'MIEMBRO', value: nombreLimpio, textAlignment: "PKTextAlignmentRight" }
                 ],
                 auxiliaryFields: [{ key: "status_premio", label: "ESTATUS", value: statusText, textAlignment: "PKTextAlignmentCenter" }],
-                backFields: [{ key: 'contact_footer', label: '📞 CONTACTO', value: 'Tel: 7712346620\n© 2025 Fresh Market' }]
+                backFields: [{ key: 'contact_footer', label: '📞 CONTACTO', value: 'Tel: 7712346620' }]
             },
-            barcode: { format: "PKBarcodeFormatQR", message: cliente._id.toString(), messageEncoding: "iso-8859-1", altText: nombreLimpio }
+            barcode: { format: "PKBarcodeFormatQR", message: cliente._id.toString(), encoding: "iso-8859-1", altText: nombreLimpio }
         };
 
         const finalBuffers = { ...buffers, 'pass.json': Buffer.from(JSON.stringify(passJson)) };
@@ -138,27 +144,29 @@ router.get('/apple/:clientId', async (req, res) => {
 // ==========================================
 router.get('/google/:clientId', async (req, res) => {
     try {
-        // VALIDACIÓN DE SEGURIDAD
-        if (!SERVICE_ACCOUNT) {
-            return res.status(500).send("Error de configuración: No hay credenciales de Google Wallet.");
-        }
+        if (!SERVICE_ACCOUNT) return res.status(500).send("No credentials");
 
         const { clientId } = req.params;
         const cliente = await Clientes.findById(clientId);
         if (!cliente) return res.status(404).send("Cliente no encontrado");
 
-        // Calcular sellos
         let numSellos = cliente.sellos || 0;
         if (numSellos > 8) numSellos = 8;
 
-        // URL PÚBLICA DE LA IMAGEN
         const imageName = `${numSellos}-sello.png`;
         const heroImageUrl = `${BASE_URL}/public/freshmarket/niveles/${imageName}`;
 
-        // ⚠️ TRUCO: Agregamos un sufijo (ej. _v3) si quieres forzar a que Google
-        // refresque el diseño si ya tenías este pase guardado en tu celular.
-        const objectId = `${GOOGLE_ISSUER_ID}.${cliente._id}_TEST_${Date.now()}`;
-        // Preparamos el nombre limpio
+        // 🎨 LOGICA DE COLOR GOOGLE
+        let selectedClassId = CLASS_NORMAL;
+        if (numSellos > 5) {
+            // ⚠️ CORRECCIÓN: Usamos la nueva constante
+            selectedClassId = CLASS_LEGEND; 
+        }
+
+        let objectSuffix = numSellos > 5 ? "_LEGEND" : "_NORMAL";
+        // Mantenemos el truco de Date.now() para pruebas
+        const objectId = `${GOOGLE_ISSUER_ID}.${cliente._id}${objectSuffix}_TEST_${Date.now()}`;
+
         const nombreLimpio = cliente.nombre ? cliente.nombre.split('-')[0].trim() : "Cliente Fresh";
 
         const payload = {
@@ -170,43 +178,25 @@ router.get('/google/:clientId', async (req, res) => {
             payload: {
                 loyaltyObjects: [{
                     id: objectId,
-                    classId: GOOGLE_CLASS_ID,
+                    classId: selectedClassId, // Se aplica el color naranja si > 5
                     state: 'ACTIVE',
-
-                    // 1. ID ÚNICO (No visual, uso interno de Google)
-                    // Usamos el teléfono o el ID para asegurar que sea único
                     accountId: cliente.telefono,
-
                     version: 1,
-
-                    // 2. CÓDIGO QR y TEXTO INFERIOR
                     barcode: {
                         type: 'QR_CODE',
                         value: cliente._id.toString(),
-                        alternateText: "fidelity.mx" // <--- CAMBIO AQUÍ (Texto bajo el QR)
+                        alternateText: "fidelity.mx"
                     },
-
-                    // 3. NOMBRE DEL CLIENTE (Visual)
-                    accountName: nombreLimpio, // <--- CAMBIO AQUÍ (Ahora sí sale el nombre)
-
-                    // 4. PUNTOS (Izquierda)
+                    accountName: nombreLimpio,
                     loyaltyPoints: {
                         label: 'Puntos',
                         balance: { string: (cliente.puntos || 0).toString() }
                     },
-
-                    // 5. SELLOS (Derecha - Nuevo campo)
                     secondaryLoyaltyPoints: {
                         label: 'Sellos',
                         balance: { string: `${numSellos}/8` }
                     },
-
-                    // Imagen de cabecera (Sellos visuales)
-                    heroImage: {
-                        sourceUri: {
-                            uri: heroImageUrl
-                        }
-                    }
+                    heroImage: { sourceUri: { uri: heroImageUrl } }
                 }]
             }
         };
@@ -218,7 +208,7 @@ router.get('/google/:clientId', async (req, res) => {
 
     } catch (err) {
         console.error("❌ GOOGLE ERROR:", err);
-        res.status(500).send('Error interno generando el pase de Google');
+        res.status(500).send('Error interno Google');
     }
 });
 
