@@ -147,6 +147,7 @@ router.get('/google/:clientId', async (req, res) => {
         const cliente = await Clientes.findById(clientId);
         if (!cliente) return res.status(404).send("Cliente no encontrado");
 
+        // Calcular sellos
         let numSellos = cliente.sellos || 0;
         if (numSellos > 8) numSellos = 8;
 
@@ -154,7 +155,11 @@ router.get('/google/:clientId', async (req, res) => {
         const imageName = `${numSellos}-sello.png`;
         const heroImageUrl = `${BASE_URL}/public/freshmarket/niveles/${imageName}`;
 
-        const objectId = `${GOOGLE_ISSUER_ID}.${cliente._id}`;
+        // ⚠️ TRUCO: Agregamos un sufijo (ej. _v3) si quieres forzar a que Google
+        // refresque el diseño si ya tenías este pase guardado en tu celular.
+        const objectId = `${GOOGLE_ISSUER_ID}.${cliente._id}_TEST_${Date.now()}`;
+        // Preparamos el nombre limpio
+        const nombreLimpio = cliente.nombre ? cliente.nombre.split('-')[0].trim() : "Cliente Fresh";
 
         const payload = {
             iss: SERVICE_ACCOUNT.client_email,
@@ -167,18 +172,36 @@ router.get('/google/:clientId', async (req, res) => {
                     id: objectId,
                     classId: GOOGLE_CLASS_ID,
                     state: 'ACTIVE',
+
+                    // 1. ID ÚNICO (No visual, uso interno de Google)
+                    // Usamos el teléfono o el ID para asegurar que sea único
                     accountId: cliente.telefono,
+
                     version: 1,
+
+                    // 2. CÓDIGO QR y TEXTO INFERIOR
                     barcode: {
                         type: 'QR_CODE',
                         value: cliente._id.toString(),
-                        alternateText: cliente.telefono
+                        alternateText: "fidelity.mx" // <--- CAMBIO AQUÍ (Texto bajo el QR)
                     },
-                    accountName: cliente.nombre,
+
+                    // 3. NOMBRE DEL CLIENTE (Visual)
+                    accountName: nombreLimpio, // <--- CAMBIO AQUÍ (Ahora sí sale el nombre)
+
+                    // 4. PUNTOS (Izquierda)
                     loyaltyPoints: {
                         label: 'Puntos',
                         balance: { string: (cliente.puntos || 0).toString() }
                     },
+
+                    // 5. SELLOS (Derecha - Nuevo campo)
+                    secondaryLoyaltyPoints: {
+                        label: 'Sellos',
+                        balance: { string: `${numSellos}/8` }
+                    },
+
+                    // Imagen de cabecera (Sellos visuales)
                     heroImage: {
                         sourceUri: {
                             uri: heroImageUrl
