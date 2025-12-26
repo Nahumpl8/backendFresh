@@ -2,6 +2,8 @@ const router = require('express').Router();
 const Pedido = require('../models/Pedidos');
 const Clientes = require('../models/Clientes');
 const { verifyToken, verifyTokenAndAuthorization } = require('./verifyToken');
+const notifyPassUpdate = require('../utils/pushApple'); // 👈 IMPORTANTE: La función de notificaciones
+const BASE_URL = process.env.BASE_URL || 'https://backendfresh-production.up.railway.app';
 
 // Función para obtener el número de semana del año
 function getWeekNumber(date) {
@@ -23,7 +25,9 @@ function esSemanaAnterior(anterior, actual) {
     );
 }
 
-// Crear nuevo pedido
+// ==========================================
+// CREAR NUEVO PEDIDO (POST /new)
+// ==========================================
 router.post('/new', async (req, res) => {
     const newPedido = new Pedido(req.body);
 
@@ -31,6 +35,13 @@ router.post('/new', async (req, res) => {
         const savedPedido = await newPedido.save();
 
         const cliente = await Clientes.findOne({ telefono: req.body.telefono });
+        
+        // Variables para la respuesta (por defecto solo el pedido)
+        let responsePayload = {
+            pedido: savedPedido,
+            walletLinks: null
+        };
+
         if (cliente) {
             const puntosUsados = req.body.puntosUsados || 0;
             const totalGastado = (cliente.totalGastado || 0) + req.body.total;
@@ -40,6 +51,7 @@ router.post('/new', async (req, res) => {
             const nuevosPuntos = Math.round(efectivoGastado * 0.015);
             const puntos = (cliente.puntos || 0) - puntosUsados + nuevosPuntos;
 
+            // --- Lógica de Semanas ---
             const now = new Date();
             const semanaActual = `${now.getFullYear()}-${getWeekNumber(now)}`;
             let semanasSeguidas = cliente.semanasSeguidas || 0;
@@ -54,6 +66,7 @@ router.post('/new', async (req, res) => {
 
             const regaloDisponible = semanasSeguidas >= 4;
 
+            // --- ACTUALIZACIÓN DE CLIENTE ---
             await cliente.updateOne({
                 $set: {
                     totalGastado,
@@ -61,12 +74,30 @@ router.post('/new', async (req, res) => {
                     puntos,
                     semanasSeguidas,
                     regaloDisponible,
-                    ultimaSemanaRegistrada: semanaActual
+                    ultimaSemanaRegistrada: semanaActual,
+                    // ⚠️ IMPORTANTE: Sumamos 1 sello para que el Wallet avance
+                    sellos: (cliente.sellos || 0) + 1 
                 }
             });
+
+            // ==================================================
+            // 🔔 NOTIFICACIÓN A APPLE WALLET
+            // ==================================================
+            // Ejecutamos sin await para no frenar la respuesta
+            notifyPassUpdate(cliente._id).catch(err => console.error("❌ Error push wallet:", err));
+
+            // ==================================================
+            // 🔗 GENERAR LINKS PARA EL FRONTEND
+            // ==================================================
+            responsePayload.walletLinks = {
+                apple: `${BASE_URL}/api/wallet/apple/${cliente._id}`,
+                google: `${BASE_URL}/api/wallet/google/${cliente._id}`
+            };
         }
 
-        res.status(200).json(savedPedido);
+        // Enviamos la respuesta enriquecida (Pedido + Links)
+        res.status(200).json(responsePayload);
+
     } catch (err) {
         console.error(err);
         res.status(500).json(err);
@@ -90,7 +121,7 @@ router.delete('/:id', async (req, res) => {
         const pedido = await Pedido.findById(req.params.id);
         if (!pedido) return res.status(404).json('Pedido no encontrado');
 
-        console.log('Pedido a eliminar:', pedido); // Verifica que puntosUsados esté presente
+        console.log('Pedido a eliminar:', pedido); 
 
         const cliente = await Clientes.findOne({ telefono: pedido.telefono });
 
@@ -98,19 +129,24 @@ router.delete('/:id', async (req, res) => {
             const puntosGanados = Math.round((pedido.total - (pedido.puntosUsados || 0)) * 0.015);
             const puntosDevueltos = pedido.puntosUsados || 0;
 
-            const nuevosPuntos =
-                (cliente.puntos || 0) - puntosGanados + puntosDevueltos;
-
-            // Evitar negativos
+            const nuevosPuntos = (cliente.puntos || 0) - puntosGanados + puntosDevueltos;
             const puntosFinal = nuevosPuntos >= 0 ? nuevosPuntos : 0;
+
+            // Restamos también el sello si se elimina el pedido
+            const nuevosSellos = (cliente.sellos || 0) - 1;
+            const sellosFinal = nuevosSellos >= 0 ? nuevosSellos : 0;
 
             await cliente.updateOne({
                 $set: {
                     puntos: puntosFinal,
+                    sellos: sellosFinal, // Actualizamos sellos al borrar
                     totalGastado: (cliente.totalGastado || 0) - pedido.total,
                     totalPedidos: (cliente.totalPedidos || 0) - 1
                 }
             });
+            
+            // Opcional: Avisar al Wallet que bajaron los puntos/sellos
+            notifyPassUpdate(cliente._id).catch(err => console.error("❌ Error push wallet delete:", err));
 
             console.log(`Cliente actualizado: -${puntosGanados} puntos ganados, +${puntosDevueltos} puntos devueltos`);
         }
