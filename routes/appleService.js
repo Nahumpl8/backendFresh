@@ -16,12 +16,12 @@ function validateAuthToken(authHeader, serialNumber) {
     if (!authHeader) return false;
     const token = authHeader.replace('ApplePass ', '');
     const clientId = serialNumber.replace('FRESH-', '');
-    
+
     // Recalculamos el token esperado
     const expectedToken = crypto.createHmac('sha256', WALLET_SECRET)
         .update(clientId)
         .digest('hex');
-        
+
     return token === expectedToken;
 }
 
@@ -45,7 +45,7 @@ router.post('/v1/devices/:deviceId/registrations/:passTypeId/:serialNumber', asy
         // 2. Guardar en Base de Datos (Si ya existe, actualiza el token)
         await WalletDevice.findOneAndUpdate(
             { deviceLibraryIdentifier: deviceId, serialNumber: serialNumber },
-            { 
+            {
                 pushToken: pushToken,
                 passTypeIdentifier: passTypeId
             },
@@ -66,9 +66,9 @@ router.post('/v1/devices/:deviceId/registrations/:passTypeId/:serialNumber', asy
 router.get('/v1/devices/:deviceId/registrations/:passTypeId', async (req, res) => {
     try {
         const { deviceId, passTypeId } = req.params;
-        
+
         // Buscamos si este iPhone tiene pases registrados
-        const registrations = await WalletDevice.find({ 
+        const registrations = await WalletDevice.find({
             deviceLibraryIdentifier: deviceId,
             passTypeIdentifier: passTypeId
         });
@@ -94,58 +94,81 @@ router.get('/v1/devices/:deviceId/registrations/:passTypeId', async (req, res) =
 // 3️⃣ ENTREGA: El iPhone pide "Dame la última versión del pase"
 // GET /v1/passes/:passTypeID/:serial#
 // ==================================================================
+// ==================================================================
+// 3️⃣ ENTREGA: El iPhone pide "Dame la última versión del pase"
+// GET /v1/passes/:passTypeID/:serial#
+// ==================================================================
 router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
     try {
         const { serialNumber } = req.params;
-        console.log(`📥 iPhone descargando actualización para: ${serialNumber}`);
 
-        // Validar Seguridad
+        // 1. Validar Seguridad
         if (!validateAuthToken(req.headers.authorization, serialNumber)) {
             return res.sendStatus(401);
         }
 
-        // --- REGENERAR EL PASE (Lógica idéntica a wallet.js) ---
-        // 1. Buscar Cliente
+        // 2. Buscar Cliente
         const clientId = serialNumber.replace('FRESH-', '');
         const cliente = await Clientes.findById(clientId);
         if (!cliente) return res.sendStatus(404);
 
-        // 2. Rutas y Certificados
+        // ==============================================================
+        // 🚦 CONTROL DE CACHÉ (Solución al error del Log)
+        // ==============================================================
+        // Obtenemos la fecha de última modificación REAL del cliente en Mongo
+        const lastModified = new Date(cliente.updatedAt);
+
+        // Redondeamos a segundos (los headers HTTP no manejan milisegundos)
+        const lastModifiedTime = Math.floor(lastModified.getTime() / 1000);
+
+        // Verificamos si Apple nos envió el header "If-Modified-Since"
+        const ifModifiedSince = req.headers['if-modified-since'];
+
+        if (ifModifiedSince) {
+            const ifModifiedTime = Math.floor(new Date(ifModifiedSince).getTime() / 1000);
+
+            // Si la fecha del cliente es igual o anterior a la que tiene Apple...
+            if (lastModifiedTime <= ifModifiedTime) {
+                console.log(`⛔ 304 Not Modified para ${serialNumber}`);
+                return res.status(304).end(); // Le decimos: "No descargues nada, usa el que tienes"
+            }
+        }
+        // ==============================================================
+
+        console.log(`📥 iPhone descargando actualización REAL para: ${serialNumber}`);
+
+        // --- REGENERAR EL PASE ---
         const baseDir = path.resolve(__dirname, '../assets/freshmarket');
         const certsDir = path.resolve(__dirname, '../certs');
         const nivelesDir = path.join(baseDir, 'niveles');
-        
+
         const wwdr = fs.readFileSync(path.join(certsDir, 'wwdr.pem'));
         const signerCert = fs.readFileSync(path.join(certsDir, 'signerCert.pem'));
         const signerKey = fs.readFileSync(path.join(certsDir, 'signerKey.pem'));
 
-        // 3. Lógica de Datos (Sellos, Color, etc.)
         let numSellos = cliente.sellos || 0;
         if (numSellos > 8) numSellos = 8;
         let numPuntos = cliente.puntos || 0;
 
-        let statusText = 'Cliente Fresh';
-        if (numSellos >= 8) statusText = '🎁 Premio disponible';
+        let statusText = 'Miembro Fresh';
+        if (numSellos >= 8) statusText = '🎁 ¡PREMIO DISPONIBLE!';
         else if (numSellos === 0) statusText = '🌟 Bienvenido';
+        else if (numSellos > 5 && numSellos < 8) statusText = '🔥 ¡YA CASI LLEGAS!';
 
         let appleBackgroundColor = "rgb(34, 139, 34)";
+        let appleLabelColor = "rgb(200, 255, 200)";
+
         if (numSellos > 5) {
             appleBackgroundColor = "rgb(249, 115, 22)";
-            if (numSellos < 8) statusText = '🔥 ¡YA CASI LLEGAS!';
+            appleLabelColor = "rgb(255, 230, 200)";
         }
 
         const stripFilename = `${numSellos}-sello.png`;
         const stripPath = path.join(nivelesDir, stripFilename);
         const finalStripPath = fs.existsSync(stripPath) ? stripPath : path.join(nivelesDir, '0-sello.png');
-        
-        // Recalcular AuthToken (necesario incluirlo de nuevo)
-        const authToken = crypto.createHmac('sha256', WALLET_SECRET)
-            .update(cliente._id.toString())
-            .digest('hex');
 
-        // Función auxiliar para nombre
-        const formatSmartName = (n) => n ? n.split(' ')[0] : 'Cliente';
-        const nombreLimpio = formatSmartName(cliente.nombre);
+        const authToken = crypto.createHmac('sha256', WALLET_SECRET).update(cliente._id.toString()).digest('hex');
+        const nombreLimpio = cliente.nombre ? cliente.nombre.split('-')[0].trim() : "Cliente"; // Tu helper simplificado
 
         const buffers = {
             'icon.png': fs.readFileSync(path.join(baseDir, 'icon.png')),
@@ -165,19 +188,34 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
             description: "Tarjeta de Lealtad",
             logoText: "Fresh Market",
             foregroundColor: "rgb(255, 255, 255)",
-            backgroundColor: appleBackgroundColor, // Color actualizado
-            labelColor: "rgb(230, 255, 230)",
-            webServiceURL: WEB_SERVICE_URL, // IMPORTANTE: Misma URL
+            backgroundColor: appleBackgroundColor,
+            labelColor: appleLabelColor,
+            webServiceURL: WEB_SERVICE_URL,
             authenticationToken: authToken,
+            // 🔒 TRUCO: Campo invisible que cambia siempre para evitar "unchanged pass data"
+            // Esto obliga a que el binario sea diferente aunque los datos sean iguales
+            userInfo: {
+                generatedAt: new Date().toISOString(),
+                updateTrigger: lastModifiedTime
+            },
             locations: [{ latitude: 20.102220, longitude: -98.761820, relevantText: "🥕 Fresh Market te espera." }],
             storeCard: {
-                headerFields: [{ key: "puntos_header", label: "MIS PUNTOS", value: numPuntos.toString(), textAlignment: "PKTextAlignmentRight" }],
-                secondaryFields: [
-                    { key: 'balance_sellos', label: 'SELLOS', value: `${numSellos}/8`, textAlignment: "PKTextAlignmentLeft" },
-                    { key: 'name', label: 'MIEMBRO', value: nombreLimpio, textAlignment: "PKTextAlignmentRight" }
+                primaryFields: [
+                    { key: "puntos", label: "PUNTOS DISPONIBLES", value: numPuntos.toString(), textAlignment: "PKTextAlignmentCenter", changeMessage: "Tus puntos han cambiado a %@" }
                 ],
-                auxiliaryFields: [{ key: "status_premio", label: "ESTATUS", value: statusText, textAlignment: "PKTextAlignmentCenter" }],
-                backFields: [{ key: 'contact_footer', label: '📞 CONTACTO', value: 'Tel: 7712346620' }]
+                secondaryFields: [
+                    { key: 'balance_sellos', label: 'MIS SELLOS', value: `${numSellos} de 8`, textAlignment: "PKTextAlignmentLeft", changeMessage: "¡Actualización! Ahora tienes %@ sellos 🥕" },
+                    { key: 'nombre', label: 'CLIENTE', value: nombreLimpio, textAlignment: "PKTextAlignmentRight" }
+                ],
+                auxiliaryFields: [
+                    { key: "status", label: "ESTATUS", value: statusText, textAlignment: "PKTextAlignmentCenter" }
+                ],
+                backFields: [
+                    { key: "whatsapp", label: "📞 PEDIDOS WHATSAPP", value: "771-234-6620", textAlignment: "PKTextAlignmentLeft" },
+                    { key: "socials", label: "📱 SÍGUENOS", value: "FB: Fresh Market Pachuca\nIG: @freshmarketpachuca", textAlignment: "PKTextAlignmentLeft" },
+                    { key: "terms", label: "📄 TÉRMINOS", value: "Acumula 1 sello por cada compra >$300.", textAlignment: "PKTextAlignmentLeft" },
+                    { key: "last_update", label: "Última Actualización", value: lastModified.toLocaleString('es-MX'), textAlignment: "PKTextAlignmentRight" }
+                ]
             },
             barcode: { format: "PKBarcodeFormatQR", message: cliente._id.toString(), encoding: "iso-8859-1", altText: nombreLimpio }
         };
@@ -186,9 +224,11 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
         const pass = new PKPass(finalBuffers, { wwdr, signerCert, signerKey });
         const buffer = await pass.getAsBuffer();
 
-        // Enviamos el pase modificado (304 Not Modified es posible, pero enviamos 200 siempre por seguridad)
+        // 3. Headers Correctos
         res.set('Content-Type', 'application/vnd.apple.pkpass');
-        res.set('last-modified', new Date().toUTCString());
+        res.set('Cache-Control', 'no-cache, no-store, must-revalidate'); // Forzamos a no cachear intermedios
+        res.set('Last-Modified', lastModified.toUTCString()); // Enviamos la fecha real de Mongo
+
         res.send(buffer);
 
     } catch (err) {
@@ -196,7 +236,6 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
         res.sendStatus(500);
     }
 });
-
 // ==================================================================
 // 4️⃣ BAJA: El usuario borró el pase de su Wallet
 // DELETE /v1/devices/:deviceID/registrations/:passTypeID/:serial#
@@ -204,13 +243,13 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
 router.delete('/v1/devices/:deviceId/registrations/:passTypeId/:serialNumber', async (req, res) => {
     try {
         const { deviceId, serialNumber } = req.params;
-        
+
         // Validación token
         if (!validateAuthToken(req.headers.authorization, serialNumber)) return res.sendStatus(401);
 
-        await WalletDevice.findOneAndDelete({ 
-            deviceLibraryIdentifier: deviceId, 
-            serialNumber: serialNumber 
+        await WalletDevice.findOneAndDelete({
+            deviceLibraryIdentifier: deviceId,
+            serialNumber: serialNumber
         });
 
         console.log(`🗑️ Pase eliminado de Wallet: ${serialNumber}`);
