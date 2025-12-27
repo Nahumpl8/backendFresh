@@ -31,10 +31,7 @@ const WEB_SERVICE_URL = `${BASE_URL}/api/wallet`;
 const WALLET_SECRET = process.env.WALLET_SECRET || 'fresh-market-secret-key-2025';
 
 const GOOGLE_ISSUER_ID = '3388000000023046225';
-
-// Definimos las DOS clases de Google
 const CLASS_NORMAL = `${GOOGLE_ISSUER_ID}.fresh_market_loyal`;
-// ⚠️ CORRECCIÓN AQUÍ: Debe coincidir con tu script setupLegendClass.js
 const CLASS_LEGEND = `${GOOGLE_ISSUER_ID}.fresh_market_legend`; 
 
 function formatSmartName(fullName) {
@@ -69,17 +66,18 @@ router.get('/apple/:clientId', async (req, res) => {
         if (numSellos > 8) numSellos = 8;
         let numPuntos = cliente.puntos || 0;
 
-        let statusText = 'Cliente Fresh';
-        if (numSellos >= 8) statusText = '🎁 Premio disponible';
+        let statusText = 'Miembro Fresh';
+        if (numSellos >= 8) statusText = '🎁 ¡PREMIO DISPONIBLE!';
         else if (numSellos === 0) statusText = '🌟 Bienvenido';
+        else if (numSellos > 5 && numSellos < 8) statusText = '🔥 ¡YA CASI LLEGAS!';
 
         // 🎨 LOGICA DE COLOR APPLE
-        // Verde normal: rgb(34, 139, 34)
-        // Naranja Legend: rgb(249, 115, 22)
-        let appleBackgroundColor = "rgb(34, 139, 34)";
+        let appleBackgroundColor = "rgb(34, 139, 34)"; // Verde
+        let appleLabelColor = "rgb(200, 255, 200)";
+        
         if (numSellos > 5) {
             appleBackgroundColor = "rgb(249, 115, 22)"; // Naranja
-            if (numSellos < 8) statusText = '🔥 ¡YA CASI LLEGAS!';
+            appleLabelColor = "rgb(255, 230, 200)";
         }
 
         // Imagen dinámica
@@ -108,21 +106,91 @@ router.get('/apple/:clientId', async (req, res) => {
             description: "Tarjeta de Lealtad",
             logoText: "Fresh Market",
             foregroundColor: "rgb(255, 255, 255)",
-            backgroundColor: appleBackgroundColor, // Color Dinámico
-            labelColor: "rgb(230, 255, 230)",
+            backgroundColor: appleBackgroundColor,
+            labelColor: appleLabelColor,
             webServiceURL: WEB_SERVICE_URL,
             authenticationToken: authToken,
             locations: [{ latitude: 20.102220, longitude: -98.761820, relevantText: "🥕 Fresh Market te espera." }],
+            
             storeCard: {
-                headerFields: [{ key: "puntos_header", label: "MIS PUNTOS", value: numPuntos.toString(), textAlignment: "PKTextAlignmentRight" }],
-                secondaryFields: [
-                    { key: 'balance_sellos', label: 'SELLOS', value: `${numSellos}/8`, textAlignment: "PKTextAlignmentLeft" },
-                    { key: 'name', label: 'MIEMBRO', value: nombreLimpio, textAlignment: "PKTextAlignmentRight" }
+                // 1. PUNTOS EN GRANDE (Primary)
+                primaryFields: [
+                    { 
+                        key: "puntos", 
+                        label: "PUNTOS DISPONIBLES", 
+                        value: numPuntos.toString(), 
+                        textAlignment: "PKTextAlignmentCenter",
+                        // Notificación si cambian los puntos
+                        changeMessage: "Tus puntos han cambiado a %@" 
+                    }
                 ],
-                auxiliaryFields: [{ key: "status_premio", label: "ESTATUS", value: statusText, textAlignment: "PKTextAlignmentCenter" }],
-                backFields: [{ key: 'contact_footer', label: '📞 CONTACTO', value: 'Tel: 7712346620' }]
+                // 2. SELLOS Y NOMBRE (Secondary)
+                secondaryFields: [
+                    { 
+                        key: "balance_sellos", 
+                        label: "MIS SELLOS", 
+                        value: `${numSellos} de 8`, 
+                        textAlignment: "PKTextAlignmentLeft",
+                        // 👇 ¡AQUÍ ESTÁ LA MAGIA DE LA NOTIFICACIÓN! 👇
+                        // %@ se reemplaza automáticamente por el nuevo valor (ej. "3 de 8")
+                        changeMessage: "¡Actualización! Ahora tienes %@ sellos 🥕"
+                    },
+                    { 
+                        key: "nombre", 
+                        label: "CLIENTE", 
+                        value: nombreLimpio, 
+                        textAlignment: "PKTextAlignmentRight" 
+                    }
+                ],
+                // 3. ESTATUS (Auxiliary)
+                auxiliaryFields: [
+                    { 
+                        key: "status", 
+                        label: "ESTATUS", 
+                        value: statusText, 
+                        textAlignment: "PKTextAlignmentCenter" 
+                    }
+                ],
+                // 4. INFORMACIÓN ATRÁS (BackFields) - ¡RECUPERADA! 🔙
+                backFields: [
+                    {
+                        key: "whatsapp",
+                        label: "📞 PEDIDOS WHATSAPP",
+                        value: "771-234-6620", // Apple lo detecta como tel y linkea
+                        textAlignment: "PKTextAlignmentLeft"
+                    },
+                    {
+                        key: "socials",
+                        label: "📱 SÍGUENOS",
+                        value: "FB: Fresh Market Pachuca\nIG: @freshmarketpachuca",
+                        textAlignment: "PKTextAlignmentLeft"
+                    },
+                    {
+                        key: "address",
+                        label: "📍 DIRECCIÓN",
+                        value: "Blvd. Valle de San Javier 301, Pachuca.",
+                        textAlignment: "PKTextAlignmentLeft"
+                    },
+                    {
+                        key: "terms",
+                        label: "📄 TÉRMINOS Y CONDICIONES",
+                        value: "1. Acumula 1 sello por cada compra mayor a $300.\n2. Al llegar a 8 sellos recibe $100 de regalo en tu siguiente compra.\n3. Los puntos equivalen a dinero electrónico.",
+                        textAlignment: "PKTextAlignmentLeft"
+                    },
+                    {
+                        key: "last_update",
+                        label: "Última Actualización",
+                        value: new Date().toLocaleString('es-MX'),
+                        textAlignment: "PKTextAlignmentRight"
+                    }
+                ]
             },
-            barcode: { format: "PKBarcodeFormatQR", message: cliente._id.toString(), encoding: "iso-8859-1", altText: nombreLimpio }
+            barcode: { 
+                format: "PKBarcodeFormatQR", 
+                message: cliente._id.toString(), 
+                messageEncoding: "iso-8859-1", 
+                altText: nombreLimpio 
+            }
         };
 
         const finalBuffers = { ...buffers, 'pass.json': Buffer.from(JSON.stringify(passJson)) };
@@ -140,7 +208,7 @@ router.get('/apple/:clientId', async (req, res) => {
 });
 
 // ==========================================
-// 🤖 GOOGLE WALLET ENDPOINT
+// 🤖 GOOGLE WALLET ENDPOINT (SIN CAMBIOS)
 // ==========================================
 router.get('/google/:clientId', async (req, res) => {
     try {
@@ -156,15 +224,12 @@ router.get('/google/:clientId', async (req, res) => {
         const imageName = `${numSellos}-sello.png`;
         const heroImageUrl = `${BASE_URL}/public/freshmarket/niveles/${imageName}`;
 
-        // 🎨 LOGICA DE COLOR GOOGLE
         let selectedClassId = CLASS_NORMAL;
         if (numSellos > 5) {
-            // ⚠️ CORRECCIÓN: Usamos la nueva constante
             selectedClassId = CLASS_LEGEND; 
         }
 
         let objectSuffix = numSellos > 5 ? "_LEGEND" : "_NORMAL";
-        // Mantenemos el truco de Date.now() para pruebas
         const objectId = `${GOOGLE_ISSUER_ID}.${cliente._id}${objectSuffix}_TEST_${Date.now()}`;
 
         const nombreLimpio = cliente.nombre ? cliente.nombre.split('-')[0].trim() : "Cliente Fresh";
@@ -178,7 +243,7 @@ router.get('/google/:clientId', async (req, res) => {
             payload: {
                 loyaltyObjects: [{
                     id: objectId,
-                    classId: selectedClassId, // Se aplica el color naranja si > 5
+                    classId: selectedClassId,
                     state: 'ACTIVE',
                     accountId: cliente.telefono,
                     version: 1,
@@ -196,7 +261,14 @@ router.get('/google/:clientId', async (req, res) => {
                         label: 'Sellos',
                         balance: { string: `${numSellos}/8` }
                     },
-                    heroImage: { sourceUri: { uri: heroImageUrl } }
+                    heroImage: { sourceUri: { uri: heroImageUrl } },
+                    // Google no usa backFields igual, pero tiene info del programa
+                    linksModuleData: {
+                        uris: [
+                            { kind: "i18n.WALLET_URI_PHONE", uri: "tel:7712346620", description: "Llamar a Fresh Market" },
+                            { kind: "i18n.WALLET_URI_WEB", uri: "https://facebook.com/freshmarketpachuca", description: "Facebook" }
+                        ]
+                    }
                 }]
             }
         };
