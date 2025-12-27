@@ -2,6 +2,7 @@ const router = require('express').Router();
 const Clientes = require('../models/Clientes');
 const { verifyToken } = require('./verifyToken');
 const Pedido = require('../models/Pedidos');
+const WalletDevice = require('../models/WalletDevice'); // <--- IMPORTAR ESTO ARRIBA
 
 
 // Utilidad para limpiar teléfono
@@ -181,10 +182,32 @@ router.put('/canjear/:telefono', async (req, res) => {
 });
 
 // Obtener todos los clientes
+// GET ALL CLIENTS
 router.get('/', async (req, res) => {
     try {
-        const clientes = await Clientes.find();
-        res.status(200).json(clientes);
+        // 1. Buscamos todos los clientes como siempre
+        const clientes = await Clientes.find().sort({ nombre: 1 });
+
+        // 2. [NUEVO] Verificamos quién tiene Wallet instalada
+        // Usamos Promise.all para esperar a que se revisen todos
+        const clientesConWallet = await Promise.all(clientes.map(async (c) => {
+
+            // El ID del pase es "FRESH-" + el ID del cliente
+            const serialNumber = `FRESH-${c._id}`;
+
+            // Contamos si hay dispositivos registrados con ese serial
+            const deviceCount = await WalletDevice.countDocuments({ serialNumber: serialNumber });
+
+            // Devolvemos el cliente convertido a objeto simple + la bandera hasWallet
+            return {
+                ...c.toObject(), // Importante: convertir a objeto JS normal para poder editarlo
+                hasWallet: deviceCount > 0 // true si encontró algo, false si es 0
+            };
+        }));
+
+        // 3. Respondemos con la lista enriquecida
+        res.status(200).json(clientesConWallet);
+
     } catch (err) {
         console.error(err);
         res.status(500).json(err);
