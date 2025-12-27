@@ -115,12 +115,7 @@ router.get('/apple/:clientId', async (req, res) => {
             storeCard: {
                 // 1. PUNTOS EN GRANDE (Primary)
                 primaryFields: [
-                    {
-                        key: "puntos",
-                        label: "PUNTOS DISPONIBLES",
-                        value: numPuntos.toString(),
-                        textAlignment: "PKTextAlignmentCenter",
-                    }
+                    
                 ],
                 // 2. SELLOS Y NOMBRE (Secondary)
                 secondaryFields: [
