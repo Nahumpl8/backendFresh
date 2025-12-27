@@ -152,13 +152,13 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                     {
                         key: "quick_links",
                         label: "📱 CONTACTO RÁPIDO",
-                        value: "💬 WhatsApp Pedidos:\nhttps://wa.me/527712346620\n\n📸 Instagram:\nhttps://instagram.com/freshmarketpachuca\n\n📘 Facebook:\nhttps://facebook.com/freshmarketpachuca",
+                        value: "💬 WhatsApp Pedidos:\nhttps://wa.me/527712346620\n\n📸 Instagram:\nhttps://instagram.com/freshmarketp\n\n📘 Facebook:\nhttps://facebook.com/freshmarketp",
                         textAlignment: "PKTextAlignmentLeft"
                     },
                     {
                         key: "how_it_works",
                         label: "🙌 TU TARJETA FRESH",
-                        value: "🥕 Recibe 1 sello por compras mayores a $300.\n🎉 Al juntar 8 sellos, ¡recibe $100 de regalo!\n💰 Tus puntos valen dinero electrónico.",
+                        value: "🥕 Recibe 1 sello por compras mayores a $300.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico (no son canjeables por dinero en efectivo).",
                         textAlignment: "PKTextAlignmentLeft"
                     },
                     {

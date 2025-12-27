@@ -161,7 +161,7 @@ router.get('/apple/:clientId', async (req, res) => {
                     {
                         key: "how_it_works",
                         label: "🙌 TU TARJETA FRESH",
-                        value: "🥕 Recibe 1 sello por compras mayores a $300.\n🎉 Al juntar 8 sellos, ¡recibe un producto de $100 de regalo!\n💰 Tus puntos valen dinero electrónico.",
+                        value: "🥕 Recibe 1 sello por compras mayores a $300.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico (no son canjeables por dinero en efectivo).",
                         textAlignment: "PKTextAlignmentLeft"
                     },
                     // C. Info del Cliente
