@@ -32,7 +32,7 @@ const WALLET_SECRET = process.env.WALLET_SECRET || 'fresh-market-secret-key-2025
 
 const GOOGLE_ISSUER_ID = '3388000000023046225';
 const CLASS_NORMAL = `${GOOGLE_ISSUER_ID}.fresh_market_loyal`;
-const CLASS_LEGEND = `${GOOGLE_ISSUER_ID}.fresh_market_legend`; 
+const CLASS_LEGEND = `${GOOGLE_ISSUER_ID}.fresh_market_legend`;
 
 function formatSmartName(fullName) {
     if (!fullName) return "Cliente Fresh";
@@ -74,7 +74,7 @@ router.get('/apple/:clientId', async (req, res) => {
         // 🎨 LOGICA DE COLOR APPLE
         let appleBackgroundColor = "rgb(34, 139, 34)"; // Verde
         let appleLabelColor = "rgb(200, 255, 200)";
-        
+
         if (numSellos > 5) {
             appleBackgroundColor = "rgb(249, 115, 22)"; // Naranja
             appleLabelColor = "rgb(255, 230, 200)";
@@ -111,85 +111,87 @@ router.get('/apple/:clientId', async (req, res) => {
             webServiceURL: WEB_SERVICE_URL,
             authenticationToken: authToken,
             locations: [{ latitude: 20.102220, longitude: -98.761820, relevantText: "🥕 Fresh Market te espera." }],
-            
+
             storeCard: {
                 // 1. PUNTOS EN GRANDE (Primary)
                 primaryFields: [
-                    { 
-                        key: "puntos", 
-                        label: "PUNTOS DISPONIBLES", 
-                        value: numPuntos.toString(), 
+                    {
+                        key: "puntos",
+                        label: "PUNTOS DISPONIBLES",
+                        value: numPuntos.toString(),
                         textAlignment: "PKTextAlignmentCenter",
-                        // Notificación si cambian los puntos
-                        changeMessage: "Tus puntos han cambiado a %@" 
                     }
                 ],
                 // 2. SELLOS Y NOMBRE (Secondary)
                 secondaryFields: [
-                    { 
-                        key: "balance_sellos", 
-                        label: "MIS SELLOS", 
-                        value: `${numSellos} de 8`, 
+                    {
+                        key: "balance_sellos",
+                        label: "MIS SELLOS",
+                        value: `${numSellos} de 8`,
                         textAlignment: "PKTextAlignmentLeft",
-                        // 👇 ¡AQUÍ ESTÁ LA MAGIA DE LA NOTIFICACIÓN! 👇
-                        // %@ se reemplaza automáticamente por el nuevo valor (ej. "3 de 8")
                         changeMessage: "¡Actualización! Ahora tienes %@ sellos 🥕"
                     },
-                    { 
-                        key: "nombre", 
-                        label: "CLIENTE", 
-                        value: nombreLimpio, 
-                        textAlignment: "PKTextAlignmentRight" 
+                    {
+                        key: "nombre",
+                        label: "CLIENTE",
+                        value: nombreLimpio,
+                        textAlignment: "PKTextAlignmentRight"
                     }
                 ],
                 // 3. ESTATUS (Auxiliary)
                 auxiliaryFields: [
-                    { 
-                        key: "status", 
-                        label: "ESTATUS", 
-                        value: statusText, 
-                        textAlignment: "PKTextAlignmentCenter" 
+                    {
+                        key: "status",
+                        label: "ESTATUS",
+                        value: statusText,
+                        textAlignment: "PKTextAlignmentCenter"
                     }
                 ],
-                // 4. INFORMACIÓN ATRÁS (BackFields) - ¡RECUPERADA! 🔙
+                // 4. INFORMACIÓN ATRÁS (Estilo Le Duo) ✨
                 backFields: [
+                    // A. Enlaces Rápidos con Emojis
                     {
-                        key: "whatsapp",
-                        label: "📞 PEDIDOS WHATSAPP",
-                        value: "771-234-6620", // Apple lo detecta como tel y linkea
+                        key: "quick_links",
+                        label: "📱 CONTACTO RÁPIDO",
+                        // Los saltos de linea \n son clave aquí
+                        value: "💬 WhatsApp Pedidos:\nhttps://wa.me/527712346620\n\n📸 Instagram:\nhttps://instagram.com/freshmarketp\n\n📘 Facebook:\nhttps://facebook.com/freshmarketp",
                         textAlignment: "PKTextAlignmentLeft"
                     },
+                    // B. Explicación del programa
                     {
-                        key: "socials",
-                        label: "📱 SÍGUENOS",
-                        value: "FB: Fresh Market Pachuca\nIG: @freshmarketpachuca",
+                        key: "how_it_works",
+                        label: "🙌 TU TARJETA FRESH",
+                        value: "🥕 Recibe 1 sello por compras mayores a $300.\n🎉 Al juntar 8 sellos, ¡recibe un producto de $100 de regalo!\n💰 Tus puntos valen dinero electrónico.",
                         textAlignment: "PKTextAlignmentLeft"
                     },
+                    // C. Info del Cliente
                     {
-                        key: "address",
-                        label: "📍 DIRECCIÓN",
-                        value: "Blvd. Valle de San Javier 301, Pachuca.",
+                        key: "account_info",
+                        label: "👤 TITULAR",
+                        value: `${nombreLimpio}\nNivel: ${statusText}`,
+                        textAlignment: "PKTextAlignmentRight"
+                    },
+                    // D. Dirección
+                    {
+                        key: "contact_address",
+                        label: "📍 UBICACIÓN",
+                        value: "Blvd. Valle de San Javier 301, Pachuca de Soto, Hgo.",
                         textAlignment: "PKTextAlignmentLeft"
                     },
-                    {
-                        key: "terms",
-                        label: "📄 TÉRMINOS Y CONDICIONES",
-                        value: "1. Acumula 1 sello por cada compra mayor a $300.\n2. Al llegar a 8 sellos recibe $100 de regalo en tu siguiente compra.\n3. Los puntos equivalen a dinero electrónico.",
-                        textAlignment: "PKTextAlignmentLeft"
-                    },
+                    // E. Fecha
                     {
                         key: "last_update",
-                        label: "Última Actualización",
-                        value: new Date().toLocaleString('es-MX'),
+                        label: "⏰ Última Actualización",
+                        value: new Date().toLocaleString('es-MX', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }),
                         textAlignment: "PKTextAlignmentRight"
                     }
                 ]
             },
-            barcode: { 
-                format: "PKBarcodeFormatQR", 
-                message: cliente._id.toString(), 
-                messageEncoding: "iso-8859-1", 
-                altText: nombreLimpio 
+            barcode: {
+                format: "PKBarcodeFormatQR",
+                message: cliente._id.toString(),
+                messageEncoding: "iso-8859-1",
+                altText: nombreLimpio
             }
         };
 
@@ -208,7 +210,7 @@ router.get('/apple/:clientId', async (req, res) => {
 });
 
 // ==========================================
-// 🤖 GOOGLE WALLET ENDPOINT (SIN CAMBIOS)
+// 🤖 GOOGLE WALLET ENDPOINT (IGUAL)
 // ==========================================
 router.get('/google/:clientId', async (req, res) => {
     try {
@@ -226,7 +228,7 @@ router.get('/google/:clientId', async (req, res) => {
 
         let selectedClassId = CLASS_NORMAL;
         if (numSellos > 5) {
-            selectedClassId = CLASS_LEGEND; 
+            selectedClassId = CLASS_LEGEND;
         }
 
         let objectSuffix = numSellos > 5 ? "_LEGEND" : "_NORMAL";
@@ -262,11 +264,10 @@ router.get('/google/:clientId', async (req, res) => {
                         balance: { string: `${numSellos}/8` }
                     },
                     heroImage: { sourceUri: { uri: heroImageUrl } },
-                    // Google no usa backFields igual, pero tiene info del programa
                     linksModuleData: {
                         uris: [
-                            { kind: "i18n.WALLET_URI_PHONE", uri: "tel:7712346620", description: "Llamar a Fresh Market" },
-                            { kind: "i18n.WALLET_URI_WEB", uri: "https://facebook.com/freshmarketpachuca", description: "Facebook" }
+                            { kind: "i18n.WALLET_URI_PHONE", uri: "WhatsApp: wa.me/7712346620", description: "Llamar a Fresh Market" },
+                            { kind: "i18n.WALLET_URI_WEB", uri: "https://facebook.com/freshmarketp", description: "Facebook" }
                         ]
                     }
                 }]

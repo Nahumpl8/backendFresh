@@ -2,7 +2,7 @@ const router = require('express').Router();
 const Pedido = require('../models/Pedidos');
 const Clientes = require('../models/Clientes');
 const { verifyToken, verifyTokenAndAuthorization } = require('./verifyToken');
-const notifyPassUpdate = require('../utils/pushApple'); // 👈 IMPORTANTE: La función de notificaciones
+const notifyPassUpdate = require('../utils/pushApple'); // 👈 IMPORTANTE: Notificaciones
 const BASE_URL = process.env.BASE_URL || 'https://backendfresh-production.up.railway.app';
 
 // Función para obtener el número de semana del año
@@ -36,7 +36,6 @@ router.post('/new', async (req, res) => {
 
         const cliente = await Clientes.findOne({ telefono: req.body.telefono });
         
-        // Variables para la respuesta (por defecto solo el pedido)
         let responsePayload = {
             pedido: savedPedido,
             walletLinks: null
@@ -57,7 +56,7 @@ router.post('/new', async (req, res) => {
             let semanasSeguidas = cliente.semanasSeguidas || 0;
 
             if (cliente.ultimaSemanaRegistrada === semanaActual) {
-                // misma semana, no cambia
+                // misma semana
             } else if (esSemanaAnterior(cliente.ultimaSemanaRegistrada, semanaActual)) {
                 semanasSeguidas += 1;
             } else {
@@ -65,6 +64,15 @@ router.post('/new', async (req, res) => {
             }
 
             const regaloDisponible = semanasSeguidas >= 4;
+
+            // --- LÓGICA DE SELLOS (CICLO DE 8) ---
+            let sellosActuales = cliente.sellos || 0;
+            let nuevosSellos = sellosActuales + 1;
+
+            // Si llegamos a 9 (o más), reiniciamos la tarjeta a 1
+            if (nuevosSellos > 8) {
+                nuevosSellos = 1; 
+            }
 
             // --- ACTUALIZACIÓN DE CLIENTE ---
             await cliente.updateOne({
@@ -75,27 +83,20 @@ router.post('/new', async (req, res) => {
                     semanasSeguidas,
                     regaloDisponible,
                     ultimaSemanaRegistrada: semanaActual,
-                    // ⚠️ IMPORTANTE: Sumamos 1 sello para que el Wallet avance
-                    sellos: (cliente.sellos || 0) + 1 
+                    sellos: nuevosSellos // 👈 Guardamos el ciclo corregido
                 }
             });
 
-            // ==================================================
             // 🔔 NOTIFICACIÓN A APPLE WALLET
-            // ==================================================
-            // Ejecutamos sin await para no frenar la respuesta
             notifyPassUpdate(cliente._id).catch(err => console.error("❌ Error push wallet:", err));
 
-            // ==================================================
-            // 🔗 GENERAR LINKS PARA EL FRONTEND
-            // ==================================================
+            // 🔗 LINKS PARA FRONTEND
             responsePayload.walletLinks = {
                 apple: `${BASE_URL}/api/wallet/apple/${cliente._id}`,
                 google: `${BASE_URL}/api/wallet/google/${cliente._id}`
             };
         }
 
-        // Enviamos la respuesta enriquecida (Pedido + Links)
         res.status(200).json(responsePayload);
 
     } catch (err) {
@@ -115,45 +116,51 @@ router.put('/:id', async (req, res) => {
     }
 });
 
-// Eliminar pedido
+// ==========================================
+// ELIMINAR PEDIDO (DELETE /:id)
+// ==========================================
 router.delete('/:id', async (req, res) => {
     try {
         const pedido = await Pedido.findById(req.params.id);
         if (!pedido) return res.status(404).json('Pedido no encontrado');
 
-        console.log('Pedido a eliminar:', pedido); 
+        console.log('🗑️ Eliminando pedido:', pedido._id); 
 
         const cliente = await Clientes.findOne({ telefono: pedido.telefono });
 
         if (cliente) {
+            // 1. Revertir Puntos
             const puntosGanados = Math.round((pedido.total - (pedido.puntosUsados || 0)) * 0.015);
-            const puntosDevueltos = pedido.puntosUsados || 0;
-
+            const puntosDevueltos = pedido.puntosUsados || 0; // Si usó puntos, se los regresamos
             const nuevosPuntos = (cliente.puntos || 0) - puntosGanados + puntosDevueltos;
             const puntosFinal = nuevosPuntos >= 0 ? nuevosPuntos : 0;
 
-            // Restamos también el sello si se elimina el pedido
+            // 2. Revertir Sello
+            // Restamos 1, cuidando que no baje de 0.
+            // (Nota: Si el cliente acababa de reiniciar su tarjeta de 8 a 1, 
+            // esto lo bajará a 0. Es difícil saber si debería volver a 8 sin un historial complejo,
+            // así que bajar a 0 es lo más seguro).
             const nuevosSellos = (cliente.sellos || 0) - 1;
             const sellosFinal = nuevosSellos >= 0 ? nuevosSellos : 0;
 
             await cliente.updateOne({
                 $set: {
                     puntos: puntosFinal,
-                    sellos: sellosFinal, // Actualizamos sellos al borrar
+                    sellos: sellosFinal, // 👈 Actualizamos sellos
                     totalGastado: (cliente.totalGastado || 0) - pedido.total,
                     totalPedidos: (cliente.totalPedidos || 0) - 1
                 }
             });
             
-            // Opcional: Avisar al Wallet que bajaron los puntos/sellos
+            // 🔔 AVISAR AL WALLET QUE BAJARON LOS SELLOS
             notifyPassUpdate(cliente._id).catch(err => console.error("❌ Error push wallet delete:", err));
 
-            console.log(`Cliente actualizado: -${puntosGanados} puntos ganados, +${puntosDevueltos} puntos devueltos`);
+            console.log(`Cliente actualizado: Sellos ${cliente.sellos} -> ${sellosFinal}`);
         }
 
         await Pedido.findByIdAndDelete(req.params.id);
 
-        res.status(200).json('Pedido eliminado y puntos actualizados correctamente');
+        res.status(200).json('Pedido eliminado, puntos y sellos actualizados.');
     } catch (err) {
         console.error('Error al eliminar pedido:', err);
         res.status(500).json({ error: 'Error interno al eliminar pedido' });
