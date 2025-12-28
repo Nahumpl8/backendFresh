@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose'); // Necesario para validar IDs
 
 // ==========================================
 // 🔐 CARGA DE CREDENCIALES
@@ -44,12 +45,28 @@ function formatSmartName(fullName) {
     return shortName + " " + words.slice(1).join(" ");
 }
 
+// 🛡️ FUNCIÓN DE LIMPIEZA DE ID
+function cleanObjectId(id) {
+    if (!id) return "";
+    // Elimina puntos, espacios y caracteres raros al final
+    return id.trim().replace(/[^a-fA-F0-9]/g, "");
+}
+
 // ==========================================
 // 🍏 APPLE WALLET ENDPOINT
 // ==========================================
 router.get('/apple/:clientId', async (req, res) => {
     try {
-        const { clientId } = req.params;
+        let { clientId } = req.params;
+        
+        // 1. Limpiamos el ID (Quitamos los '..' si existen)
+        clientId = cleanObjectId(clientId);
+
+        // 2. Validamos que sea un ID real de Mongo antes de buscar
+        if (!mongoose.Types.ObjectId.isValid(clientId)) {
+            return res.status(400).json({ error: "ID de cliente inválido o malformado." });
+        }
+
         const cliente = await Clientes.findById(clientId);
         if (!cliente) return res.status(404).json({ error: "Cliente no encontrado" });
 
@@ -115,26 +132,16 @@ router.get('/apple/:clientId', async (req, res) => {
             locations: [{ latitude: 20.102220, longitude: -98.761820, relevantText: "🥕 Fresh Market te espera." }],
 
             storeCard: {
-                // HEADER: Puntos a la derecha del logo
                 headerFields: [
                     {
                         key: "header_puntos",
-                        label: "",
+                        label: "Tus puntos",
                         value: `${numPuntos} pts`,
                         textAlignment: "PKTextAlignmentRight"
                     }
                 ],
-                // 1. PUNTOS EN GRANDE (Primary)
                 primaryFields: [
-                    {
-                        key: "puntos",
-                        label: "PUNTOS DISPONIBLES",
-                        value: numPuntos.toString(),
-                        textAlignment: "PKTextAlignmentCenter",
-                        changeMessage: "Tus puntos han cambiado a %@"
-                    }
                 ],
-                // 2. SELLOS Y NOMBRE (Secondary)
                 secondaryFields: [
                     {
                         key: "balance_sellos",
@@ -150,7 +157,6 @@ router.get('/apple/:clientId', async (req, res) => {
                         textAlignment: "PKTextAlignmentRight"
                     }
                 ],
-                // 3. ESTATUS (Auxiliary)
                 auxiliaryFields: [
                     {
                         key: "status",
@@ -159,38 +165,38 @@ router.get('/apple/:clientId', async (req, res) => {
                         textAlignment: "PKTextAlignmentCenter"
                     }
                 ],
-                // 4. INFORMACIÓN ATRÁS (Estilo Le Duo) ✨
                 backFields: [
-                    // A. Enlaces Rápidos con Emojis
                     {
                         key: "quick_links",
                         label: "📱 CONTACTO RÁPIDO",
-                        // Los saltos de linea \n son clave aquí
                         value: "💬 WhatsApp Pedidos:\nhttps://wa.me/527712346620\n\n📸 Instagram:\nhttps://instagram.com/freshmarketp\n\n📘 Facebook:\nhttps://facebook.com/freshmarketp",
                         textAlignment: "PKTextAlignmentLeft"
                     },
-                    // B. Explicación del programa
                     {
                         key: "how_it_works",
                         label: "🙌 TU TARJETA FRESH",
                         value: "🥕 Recibe 1 sello por compras mayores a $300.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico (no son canjeables por dinero en efectivo).",
                         textAlignment: "PKTextAlignmentLeft"
                     },
-                    // C. Info del Cliente
+                    {
+                        key: "promo_title",
+                        label: "📢 NOVEDADES",
+                        value: "🥕 Promociones a Fresh Market!",
+                        textAlignment: "PKTextAlignmentLeft",
+                        changeMessage: "%@"
+                    },
                     {
                         key: "account_info",
                         label: "👤 TITULAR",
                         value: `${nombreLimpio}\nNivel: ${statusText}`,
                         textAlignment: "PKTextAlignmentRight"
                     },
-                    // D. Dirección
                     {
                         key: "contact_address",
                         label: "📍 UBICACIÓN",
-                        value: "Blvd. Valle de San Javier 301, Pachuca de Soto, Hgo.",
+                        value: "Felipe Carrillo Puerto 603, Col. Morelos, Pachuca de Soto, Hgo.",
                         textAlignment: "PKTextAlignmentLeft"
                     },
-                    // E. Fecha
                     {
                         key: "last_update",
                         label: "⏰ Última Actualización",
@@ -224,13 +230,21 @@ router.get('/apple/:clientId', async (req, res) => {
 });
 
 // ==========================================
-// 🤖 GOOGLE WALLET ENDPOINT (IGUAL)
+// 🤖 GOOGLE WALLET ENDPOINT
 // ==========================================
 router.get('/google/:clientId', async (req, res) => {
     try {
         if (!SERVICE_ACCOUNT) return res.status(500).send("No credentials");
 
-        const { clientId } = req.params;
+        let { clientId } = req.params;
+        
+        // 1. Limpiamos ID
+        clientId = cleanObjectId(clientId);
+        
+        if (!mongoose.Types.ObjectId.isValid(clientId)) {
+            return res.status(400).send("ID de cliente inválido.");
+        }
+
         const cliente = await Clientes.findById(clientId);
         if (!cliente) return res.status(404).send("Cliente no encontrado");
 
@@ -245,7 +259,7 @@ router.get('/google/:clientId', async (req, res) => {
             selectedClassId = CLASS_LEGEND;
         }
 
-        // ObjectId persistente basado en clienteId (sin timestamp)
+        // ObjectId persistente basado en clienteId
         const objectId = `${GOOGLE_ISSUER_ID}.${cliente._id}`;
 
         const nombreLimpio = cliente.nombre ? cliente.nombre.split('-')[0].trim() : "Cliente Fresh";
@@ -255,9 +269,7 @@ router.get('/google/:clientId', async (req, res) => {
         let version = 1;
 
         if (walletObject) {
-            // Si existe, incrementar versión y usar la classId existente si no cambió
             version = walletObject.version + 1;
-            // Si cambió de clase (normal a legend o viceversa), actualizar
             if (walletObject.classId !== selectedClassId) {
                 await GoogleWalletObject.updateOne(
                     { objectId },
@@ -270,7 +282,6 @@ router.get('/google/:clientId', async (req, res) => {
                 );
             }
         } else {
-            // Crear nuevo objeto en BD
             walletObject = await GoogleWalletObject.create({
                 objectId,
                 clienteId: cliente._id,
@@ -320,9 +331,10 @@ router.get('/google/:clientId', async (req, res) => {
         const token = jwt.sign(payload, SERVICE_ACCOUNT.private_key, { algorithm: 'RS256' });
         const saveUrl = `https://pay.google.com/gp/v/save/${token}`;
 
+        // 👇 ¡AQUÍ ACTUALIZAMOS AL CLIENTE! 👇
         await Clientes.findByIdAndUpdate(clientId, {
             hasWallet: true,
-            walletPlatform: 'google' // O lógica para mantener 'both' si ya tenía apple
+            walletPlatform: 'google'
         });
         console.log(`✅ Cliente ${clientId} marcado con hasWallet: true (Google)`);
 
@@ -344,17 +356,16 @@ router.put('/google-update/:clientId', async (req, res) => {
         }
 
         const { clientId } = req.params;
-        const cliente = await Clientes.findById(clientId);
+        const cleanId = cleanObjectId(clientId); // Limpieza
+
+        const cliente = await Clientes.findById(cleanId);
         
         if (!cliente) {
             return res.status(404).json({ success: false, error: 'Cliente no encontrado' });
         }
 
-        // Importar función de actualización
         const { updateGoogleWalletObject } = require('../utils/pushGoogle');
-        
-        // Actualizar objeto
-        await updateGoogleWalletObject(clientId);
+        await updateGoogleWalletObject(cleanId);
 
         res.status(200).json({
             success: true,
@@ -376,35 +387,23 @@ router.put('/google-update/:clientId', async (req, res) => {
 router.post('/notify/:clientId', async (req, res) => {
     try {
         const { clientId } = req.params;
+        const cleanId = cleanObjectId(clientId); // Limpieza
         
-        // Verificar que el cliente existe
-        const cliente = await Clientes.findById(clientId);
+        const cliente = await Clientes.findById(cleanId);
         if (!cliente) {
-            return res.status(404).json({ 
-                success: false, 
-                error: 'Cliente no encontrado' 
-            });
+            return res.status(404).json({ success: false, error: 'Cliente no encontrado' });
         }
         
-        // Enviar notificación usando notifyPassUpdate (Apple + Google)
-        await notifyPassUpdate(clientId);
+        await notifyPassUpdate(cleanId);
         
         res.status(200).json({
             success: true,
-            message: 'Notificación enviada exitosamente',
-            cliente: {
-                _id: cliente._id,
-                nombre: cliente.nombre,
-                telefono: cliente.telefono
-            }
+            message: 'Notificación enviada exitosamente'
         });
         
     } catch (err) {
         console.error("❌ ERROR NOTIFICACIÓN INDIVIDUAL:", err);
-        res.status(500).json({
-            success: false,
-            error: err.message || 'Error al enviar notificación'
-        });
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
@@ -415,78 +414,43 @@ router.post('/notify-bulk', async (req, res) => {
     try {
         const { clientIds } = req.body;
         
-        // Validar que se enviaron clientIds
         if (!Array.isArray(clientIds) || clientIds.length === 0) {
-            return res.status(400).json({
-                success: false,
-                error: 'Se requiere un array de clientIds en el body'
-            });
+            return res.status(400).json({ success: false, error: 'Se requiere un array de clientIds' });
         }
         
         const success = [];
         const failed = [];
         
-        // Procesar cada cliente
-        for (const clientId of clientIds) {
+        for (const rawId of clientIds) {
+            const clientId = cleanObjectId(rawId); // Limpieza
             try {
-                // Verificar que el cliente existe
+                if (!mongoose.Types.ObjectId.isValid(clientId)) continue;
+
                 const cliente = await Clientes.findById(clientId);
-                
                 if (!cliente) {
-                    failed.push({
-                        clientId,
-                        nombre: 'No encontrado',
-                        error: 'Cliente no encontrado'
-                    });
+                    failed.push({ clientId, error: 'No encontrado' });
                     continue;
                 }
                 
-                // Enviar notificación
                 await notifyPassUpdate(clientId);
-                
-                success.push({
-                    clientId,
-                    nombre: cliente.nombre,
-                    telefono: cliente.telefono
-                });
+                success.push({ clientId, nombre: cliente.nombre });
                 
             } catch (err) {
                 console.error(`❌ Error notificando cliente ${clientId}:`, err);
-                
-                // Intentar obtener el nombre del cliente para el error
-                let nombre = 'Desconocido';
-                try {
-                    const cliente = await Clientes.findById(clientId);
-                    if (cliente) nombre = cliente.nombre;
-                } catch (e) {
-                    // Si falla, usar nombre por defecto
-                }
-                
-                failed.push({
-                    clientId,
-                    nombre,
-                    error: err.message || 'Error al enviar notificación'
-                });
+                failed.push({ clientId, error: err.message });
             }
         }
         
         res.status(200).json({
             success: true,
-            summary: {
-                total: clientIds.length,
-                success: success.length,
-                failed: failed.length
-            },
+            summary: { total: clientIds.length, success: success.length, failed: failed.length },
             success,
             failed
         });
         
     } catch (err) {
         console.error("❌ ERROR NOTIFICACIÓN MASIVA:", err);
-        res.status(500).json({
-            success: false,
-            error: err.message || 'Error al procesar notificaciones masivas'
-        });
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 

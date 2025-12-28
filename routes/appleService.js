@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const WalletDevice = require('../models/WalletDevice');
 const Clientes = require('../models/Clientes');
-const MarketingCampaign = require('../models/MarketingCampaign'); 
+const MarketingCampaign = require('../models/MarketingCampaign');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
@@ -10,7 +10,7 @@ const { PKPass } = require('passkit-generator');
 // SECRETOS
 const WALLET_SECRET = process.env.WALLET_SECRET || 'fresh-market-secret-key-2025';
 const BASE_URL = process.env.BASE_URL || 'https://backendfresh-production.up.railway.app';
-const WEB_SERVICE_URL = `${BASE_URL}/api/wallet`; 
+const WEB_SERVICE_URL = `${BASE_URL}/api/wallet`;
 
 function validateAuthToken(authHeader, serialNumber) {
     if (!authHeader) return false;
@@ -24,8 +24,7 @@ function validateAuthToken(authHeader, serialNumber) {
 router.post('/v1/devices/:deviceId/registrations/:passTypeId/:serialNumber', async (req, res) => {
     try {
         const { deviceId, passTypeId, serialNumber } = req.params;
-        const { pushToken } = req.body; 
-
+        const { pushToken } = req.body;
         console.log(`📲 Registro Apple Wallet recibido: ${serialNumber}`);
 
         if (!validateAuthToken(req.headers.authorization, serialNumber)) return res.sendStatus(401);
@@ -36,7 +35,7 @@ router.post('/v1/devices/:deviceId/registrations/:passTypeId/:serialNumber', asy
             { upsert: true, new: true }
         );
 
-        // Actualizar flag en cliente
+        // Marcar que el cliente tiene wallet
         const clientId = serialNumber.replace('FRESH-', '');
         await Clientes.findByIdAndUpdate(clientId, { hasWallet: true, walletPlatform: 'apple' });
 
@@ -61,7 +60,7 @@ router.get('/v1/devices/:deviceId/registrations/:passTypeId', async (req, res) =
     }
 });
 
-// 3. ENTREGA (CORREGIDA PARA MARKETING)
+// 3. ENTREGA (VERSIÓN BLINDADA 🛡️)
 router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
     try {
         const { serialNumber } = req.params;
@@ -72,12 +71,10 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
         const cliente = await Clientes.findById(clientId);
         if (!cliente) return res.sendStatus(404);
 
-        // ------------------------------------------------------------
-        // 📢 1. OBTENER CAMPAÑA Y CALCULAR FECHA REAL
-        // ------------------------------------------------------------
+        // --- 1. DATOS CAMPAÑA (Con protección try/catch) ---
         let promoTitle = "📢 NOVEDADES";
         let promoMessage = "🥕 ¡Bienvenido a Fresh Market!";
-        let campaignDate = new Date(0); // Fecha muy vieja por defecto
+        let campaignDate = new Date(0);
 
         try {
             const lastCampaign = await MarketingCampaign.findOne().sort({ sentAt: -1 });
@@ -87,32 +84,16 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                 campaignDate = new Date(lastCampaign.sentAt);
             }
         } catch (e) {
-            console.error("Error leyendo campaña:", e);
+            console.error("⚠️ Error menor leyendo campaña (se usará default):", e.message);
         }
 
-        // ------------------------------------------------------------
-        // 🚦 2. CACHE CONTROL INTELIGENTE
-        // ------------------------------------------------------------
-        // La fecha de modificación es la MAYOR entre: actualización del cliente O última campaña
+        // --- 2. CACHE CONTROL ---
         const clientDate = new Date(cliente.updatedAt);
+        // Usamos la fecha más reciente para forzar actualización si hubo campaña
         const lastModified = clientDate > campaignDate ? clientDate : campaignDate;
-        
         const lastModifiedTime = Math.floor(lastModified.getTime() / 1000);
-        const ifModifiedSince = req.headers['if-modified-since'];
 
-        if (ifModifiedSince) {
-            const ifModifiedTime = Math.floor(new Date(ifModifiedSince).getTime() / 1000);
-            if (lastModifiedTime <= ifModifiedTime) {
-                console.log(`⛔ 304 Not Modified para ${serialNumber} (Cliente o Campaña sin cambios)`);
-                return res.status(304).end();
-            }
-        }
-
-        console.log(`📥 iPhone descargando actualización: ${serialNumber}`);
-
-        // ------------------------------------------------------------
-        // 🎨 3. GENERACIÓN DEL PASE
-        // ------------------------------------------------------------
+        // --- 3. DATOS DEL PASE ---
         const baseDir = path.resolve(__dirname, '../assets/freshmarket');
         const certsDir = path.resolve(__dirname, '../certs');
         const nivelesDir = path.join(baseDir, 'niveles');
@@ -121,6 +102,7 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
         const signerCert = fs.readFileSync(path.join(certsDir, 'signerCert.pem'));
         const signerKey = fs.readFileSync(path.join(certsDir, 'signerKey.pem'));
 
+        // Lógica visual
         let numSellos = cliente.sellos || 0;
         if (numSellos > 8) numSellos = 8;
         let numPuntos = cliente.puntos || 0;
@@ -140,7 +122,7 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
         const stripFilename = `${numSellos}-sello.png`;
         const stripPath = path.join(nivelesDir, stripFilename);
         const finalStripPath = fs.existsSync(stripPath) ? stripPath : path.join(nivelesDir, '0-sello.png');
-        
+
         const authToken = crypto.createHmac('sha256', WALLET_SECRET).update(cliente._id.toString()).digest('hex');
         const nombreLimpio = cliente.nombre ? cliente.nombre.split('-')[0].trim() : "Cliente";
 
@@ -166,30 +148,36 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
             labelColor: appleLabelColor,
             webServiceURL: WEB_SERVICE_URL,
             authenticationToken: authToken,
-            // Truco: updateTrigger fuerza al binario a cambiar si la fecha cambia
             userInfo: { generatedAt: new Date().toISOString(), updateTrigger: lastModifiedTime },
             locations: [{ latitude: 20.102220, longitude: -98.761820, relevantText: "🥕 Fresh Market te espera." }],
-            
+
             storeCard: {
                 headerFields: [
-                    { key: "header_puntos", label: "Tus puntos", value: `${numPuntos} pts`, textAlignment: "PKTextAlignmentRight" }
+                    {
+                        key: "header_puntos",
+                        label: "Puntos",
+                        value: `${numPuntos} pts`,
+                        textAlignment: "PKTextAlignmentRight",
+                        // Agregamos changeMessage aquí también para evitar el genérico
+                        changeMessage: "Tus puntos cambiaron a %@"
+                    }
                 ],
-                primaryFields: [],
+                // MOVIMOS LOS SELLOS AQUI PARA PRIORIDAD
+                primaryFields: [
+                ],
                 secondaryFields: [
-                    { key: 'balance_sellos', label: 'MIS SELLOS', value: `${numSellos} de 8`, textAlignment: "PKTextAlignmentLeft", changeMessage: "¡Actualización! Ahora tienes %@ sellos 🥕" },
-                    { key: 'nombre', label: 'CLIENTE', value: nombreLimpio, textAlignment: "PKTextAlignmentRight" }
+                    { key: 'nombre', label: 'CLIENTE', value: nombreLimpio, textAlignment: "PKTextAlignmentCenter" }
                 ],
                 auxiliaryFields: [
                     { key: "status", label: "ESTATUS", value: statusText, textAlignment: "PKTextAlignmentCenter" }
                 ],
                 backFields: [
-                    // A. CAMPAÑA DE MARKETING
                     {
                         key: "marketing_promo",
                         label: promoTitle,
                         value: promoMessage,
                         textAlignment: "PKTextAlignmentLeft",
-                        changeMessage: "%@" // 🔔 ¡IMPORTANTE PARA QUE VIBRE!
+                        changeMessage: "%@"
                     },
                     {
                         key: "quick_links",
@@ -210,12 +198,6 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                         textAlignment: "PKTextAlignmentRight"
                     },
                     {
-                        key: "contact_address",
-                        label: "📍 UBICACIÓN",
-                        value: "Blvd. Valle de San Javier 301, Pachuca de Soto, Hgo.",
-                        textAlignment: "PKTextAlignmentLeft"
-                    },
-                    {
                         key: "last_update",
                         label: "⏰ Última Actualización",
                         value: lastModified.toLocaleString('es-MX', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }),
@@ -228,7 +210,7 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                     format: "PKBarcodeFormatQR",
                     message: cliente._id.toString(),
                     messageEncoding: "iso-8859-1",
-                    altText: nombreLimpio
+                    altText: 'fidelity.mx'
                 }
             ]
         };
@@ -243,8 +225,9 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
 
         res.send(buffer);
     } catch (err) {
-        console.error("❌ Error actualizando:", err);
-        res.sendStatus(500);
+        console.error("❌ Error CRÍTICO generando pase:", err);
+        // Mandamos 500 para que el front sepa que falló
+        res.status(500).send("Error generando pase");
     }
 });
 

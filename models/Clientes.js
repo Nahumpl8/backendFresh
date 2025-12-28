@@ -53,5 +53,13 @@ const ClientesSchema = new mongoose.Schema({
 // Índice único para email (solo aplica cuando email existe)
 // sparse: true permite múltiples nulls
 ClientesSchema.index({ email: 1 }, { unique: true, sparse: true });
+// ---------------------------------------------------------
+// 🚀 ÍNDICES DE VELOCIDAD (AGREGA ESTO)
+// ---------------------------------------------------------
+// Permite buscar rapidísimo por nombre y teléfono
+ClientesSchema.index({ nombre: 1 });
+ClientesSchema.index({ telefono: 1 });
+// Índice de texto para el buscador "inteligente" (opcional pero recomendado)
+ClientesSchema.index({ nombre: 'text', telefono: 'text' });
 
 module.exports = mongoose.model('Clientes', ClientesSchema);
