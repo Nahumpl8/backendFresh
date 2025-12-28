@@ -218,13 +218,14 @@ router.get('/', async (req, res) => {
 
 // 🔍 BÚSQUEDA OPTIMIZADA (Para el autocompletado)
 // GET /api/clientes/search?q=termino
+// routes/clientes.js
+
 router.get('/search', async (req, res) => {
     try {
         const query = req.query.q;
         if (!query || query.length < 2) return res.json([]);
 
-        // Creamos una expresión regular para buscar sin importar mayúsculas/minúsculas
-        // Escapamos caracteres especiales por seguridad
+        // Búsqueda insensible a mayúsculas/minúsculas y acentos
         const regex = new RegExp(query.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&"), 'i');
 
         const clientes = await Clientes.find({
@@ -235,12 +236,11 @@ router.get('/search', async (req, res) => {
             ]
         })
         .select('nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet misDirecciones ultimaSemanaRegistrada premiosPendientes')
-        .limit(20) // ⚠️ IMPORTANTE: Solo traemos 20 para no saturar
-        .lean(); // .lean() lo hace más rápido al devolver objetos JS puros
+        .limit(20) // IMPORTANTE: Límite para velocidad
+        .lean(); 
 
-        // Verificamos Wallet solo para estos 20 (muy rápido)
-        const WalletDevice = require('../models/WalletDevice'); // Asegúrate de tener el modelo importado
-        
+        // Enriquecer con hasWallet (opcional si ya lo tienes guardado en DB)
+        const WalletDevice = require('../models/WalletDevice');
         const clientesEnriquecidos = await Promise.all(clientes.map(async (c) => {
             const serialNumber = `FRESH-${c._id}`;
             const deviceCount = await WalletDevice.countDocuments({ serialNumber });
@@ -250,7 +250,7 @@ router.get('/search', async (req, res) => {
         res.json(clientesEnriquecidos);
 
     } catch (err) {
-        console.error("Error en búsqueda:", err);
+        console.error("Error búsqueda:", err);
         res.status(500).json([]);
     }
 });
