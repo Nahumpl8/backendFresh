@@ -185,13 +185,28 @@ router.put('/canjear/:telefono', async (req, res) => {
 // GET ALL CLIENTS
 router.get('/', async (req, res) => {
     try {
-        // Usar el campo hasWallet que ya existe en el modelo
-        // Este campo se actualiza automáticamente cuando se registra un dispositivo
-        // (ver routes/appleService.js y routes/wallet.js)
-        // Usando .lean() para mejor rendimiento (retorna objetos JS planos en lugar de documentos Mongoose)
-        const clientes = await Clientes.find().sort({ nombre: 1 }).lean();
-        
-        res.status(200).json(clientes);
+        // 1. Buscamos todos los clientes como siempre
+        const clientes = await Clientes.find().sort({ nombre: 1 });
+
+        // 2. [NUEVO] Verificamos quién tiene Wallet instalada
+        // Usamos Promise.all para esperar a que se revisen todos
+        const clientesConWallet = await Promise.all(clientes.map(async (c) => {
+
+            // El ID del pase es "FRESH-" + el ID del cliente
+            const serialNumber = `FRESH-${c._id}`;
+
+            // Contamos si hay dispositivos registrados con ese serial
+            const deviceCount = await WalletDevice.countDocuments({ serialNumber: serialNumber });
+
+            // Devolvemos el cliente convertido a objeto simple + la bandera hasWallet
+            return {
+                ...c.toObject(), // Importante: convertir a objeto JS normal para poder editarlo
+                hasWallet: deviceCount > 0 // true si encontró algo, false si es 0
+            };
+        }));
+
+        // 3. Respondemos con la lista enriquecida
+        res.status(200).json(clientesConWallet);
 
     } catch (err) {
         console.error(err);
