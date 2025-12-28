@@ -198,12 +198,14 @@ router.get('/apple/:clientId', async (req, res) => {
                     }
                 ]
             },
-            barcode: {
-                format: "PKBarcodeFormatQR",
-                message: cliente._id.toString(),
-                messageEncoding: "iso-8859-1",
-                altText: nombreLimpio
-            }
+            barcodes: [
+                {
+                    format: "PKBarcodeFormatQR",
+                    message: cliente._id.toString(),
+                    messageEncoding: "iso-8859-1",
+                    altText: nombreLimpio
+                }
+            ]
         };
 
         const finalBuffers = { ...buffers, 'pass.json': Buffer.from(JSON.stringify(passJson)) };

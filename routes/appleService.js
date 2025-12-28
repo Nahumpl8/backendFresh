@@ -141,13 +141,12 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                 headerFields: [
                     {
                         key: "header_puntos",
-                        label: "",
+                        label: "Tus puntos",
                         value: `${numPuntos} pts`,
                         textAlignment: "PKTextAlignmentRight"
                     }
                 ],
                 primaryFields: [
-                    { key: "puntos", label: "PUNTOS DISPONIBLES", value: numPuntos.toString(), textAlignment: "PKTextAlignmentCenter", changeMessage: "Tus puntos han cambiado a %@" }
                 ],
                 secondaryFields: [
                     { key: 'balance_sellos', label: 'MIS SELLOS', value: `${numSellos} de 8`, textAlignment: "PKTextAlignmentLeft", changeMessage: "¡Actualización! Ahora tienes %@ sellos 🥕" },
@@ -167,7 +166,7 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                     {
                         key: "how_it_works",
                         label: "🙌 TU TARJETA FRESH",
-                        value: "🥕 Recibe 1 sello por compras mayores a $300.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico (no son canjeables por dinero en efectivo).",
+                        value: "🥕 Recibe 1 sello por compras mayores a $285.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico (no son canjeables por dinero en efectivo).",
                         textAlignment: "PKTextAlignmentLeft"
                     },
                     {
@@ -190,7 +189,14 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                     }
                 ]
             },
-            barcode: { format: "PKBarcodeFormatQR", message: cliente._id.toString(), encoding: "iso-8859-1", altText: nombreLimpio }
+            barcodes: [
+                {
+                    format: "PKBarcodeFormatQR",
+                    message: cliente._id.toString(),
+                    messageEncoding: "iso-8859-1",
+                    altText: nombreLimpio
+                }
+            ]
         };
 
         const finalBuffers = { ...buffers, 'pass.json': Buffer.from(JSON.stringify(passJson)) };
