@@ -182,30 +182,27 @@ router.put('/canjear/:telefono', async (req, res) => {
 });
 
 // Obtener todos los clientes
-// GET ALL CLIENTS
+// GET ALL CLIENTS¿
 router.get('/', async (req, res) => {
     try {
-        // 1. Buscamos todos los clientes como siempre
-        const clientes = await Clientes.find().sort({ nombre: 1 });
+        // 1. Buscamos todos los clientes, pero SOLO los campos ligeros.
+        // Esto reduce la carga de 5MB a ~200KB.
+        const clientes = await Clientes.find()
+            .select('nombre direccion telefono telefonoSecundario gpsLink puntos sellos misDirecciones ultimaSemanaRegistrada premiosPendientes')
+            .sort({ nombre: 1 });
 
-        // 2. [NUEVO] Verificamos quién tiene Wallet instalada
-        // Usamos Promise.all para esperar a que se revisen todos
+        // 2. Verificamos quién tiene Wallet instalada (Igual que antes)
         const clientesConWallet = await Promise.all(clientes.map(async (c) => {
-
-            // El ID del pase es "FRESH-" + el ID del cliente
             const serialNumber = `FRESH-${c._id}`;
-
-            // Contamos si hay dispositivos registrados con ese serial
             const deviceCount = await WalletDevice.countDocuments({ serialNumber: serialNumber });
 
-            // Devolvemos el cliente convertido a objeto simple + la bandera hasWallet
             return {
-                ...c.toObject(), // Importante: convertir a objeto JS normal para poder editarlo
-                hasWallet: deviceCount > 0 // true si encontró algo, false si es 0
+                ...c.toObject(),
+                hasWallet: deviceCount > 0
             };
         }));
 
-        // 3. Respondemos con la lista enriquecida
+        // 3. Respondemos
         res.status(200).json(clientesConWallet);
 
     } catch (err) {
@@ -311,10 +308,10 @@ router.get('/stats', async (req, res) => {
 router.get('/filtered', async (req, res) => {
     try {
         const { filter = 'todos' } = req.query;
-        
+
         // Obtener todos los clientes
         const allClientes = await Clientes.find().select('_id nombre telefono');
-        
+
         // Si el filtro es 'todos', retornar todos con última fecha de pedido
         if (filter === 'todos') {
             const clientesConUltimoPedido = await Promise.all(
@@ -324,7 +321,7 @@ router.get('/filtered', async (req, res) => {
                     const ultimoPedido = await Pedido.findOne({
                         telefono: { $regex: telefonoLimpio + '$' }
                     }).sort({ createdAt: -1 });
-                    
+
                     return {
                         _id: cliente._id,
                         nombre: cliente.nombre,
@@ -333,14 +330,14 @@ router.get('/filtered', async (req, res) => {
                     };
                 })
             );
-            
+
             return res.status(200).json(clientesConUltimoPedido);
         }
-        
+
         // Calcular fecha límite según el filtro
         const ahora = new Date();
         let fechaLimite;
-        
+
         if (filter === 'sinPedidoSemana') {
             fechaLimite = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000); // 7 días atrás
         } else if (filter === 'sinPedido3Semanas') {
@@ -348,7 +345,7 @@ router.get('/filtered', async (req, res) => {
         } else {
             return res.status(400).json({ error: 'Filtro no válido. Use: todos, sinPedidoSemana, sinPedido3Semanas' });
         }
-        
+
         // Filtrar clientes que no tienen pedidos en el período
         const clientesFiltrados = await Promise.all(
             allClientes.map(async (cliente) => {
@@ -358,14 +355,14 @@ router.get('/filtered', async (req, res) => {
                     telefono: { $regex: telefonoLimpio + '$' },
                     createdAt: { $gte: fechaLimite }
                 }).sort({ createdAt: -1 });
-                
+
                 // Si no hay pedido en el período, incluir al cliente
                 if (!ultimoPedido) {
                     // Obtener último pedido histórico (fuera del período) para mostrar
                     const ultimoPedidoHistorico = await Pedido.findOne({
                         telefono: { $regex: telefonoLimpio + '$' }
                     }).sort({ createdAt: -1 });
-                    
+
                     return {
                         _id: cliente._id,
                         nombre: cliente.nombre,
@@ -373,16 +370,16 @@ router.get('/filtered', async (req, res) => {
                         ultimoPedido: ultimoPedidoHistorico?.createdAt || null
                     };
                 }
-                
+
                 return null;
             })
         );
-        
+
         // Filtrar los nulls
         const resultado = clientesFiltrados.filter(c => c !== null);
-        
+
         res.status(200).json(resultado);
-        
+
     } catch (err) {
         console.error('Error al obtener clientes filtrados:', err);
         res.status(500).json({ error: 'Error del servidor' });
