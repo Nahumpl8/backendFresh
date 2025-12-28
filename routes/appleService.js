@@ -137,6 +137,15 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
             locations: [{ latitude: 20.102220, longitude: -98.761820, relevantText: "🥕 Fresh Market te espera." }],
             
             storeCard: {
+                // HEADER: Puntos a la derecha del logo
+                headerFields: [
+                    {
+                        key: "header_puntos",
+                        label: "",
+                        value: `${numPuntos} pts`,
+                        textAlignment: "PKTextAlignmentRight"
+                    }
+                ],
                 primaryFields: [
                     { key: "puntos", label: "PUNTOS DISPONIBLES", value: numPuntos.toString(), textAlignment: "PKTextAlignmentCenter", changeMessage: "Tus puntos han cambiado a %@" }
                 ],

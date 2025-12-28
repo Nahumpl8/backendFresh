@@ -1,6 +1,7 @@
 const apn = require('apn');
 const path = require('path');
 const WalletDevice = require('../models/WalletDevice');
+const { notifyGoogleWalletUpdate } = require('./pushGoogle');
 
 // Configuración del proveedor APN
 // Usamos tus mismos certificados. Generalmente el signerCert y signerKey 
@@ -44,6 +45,11 @@ async function notifyPassUpdate(clientId) {
         if (result.failed.length > 0) {
             console.error(`❌ Falló envío a ${result.failed.length} dispositivos:`, result.failed);
         }
+
+        // También notificar Google Wallet
+        await notifyGoogleWalletUpdate(clientId).catch(err => {
+            console.error("❌ Error notificando Google Wallet:", err);
+        });
 
     } catch (err) {
         console.error("❌ Error en pushApple:", err);

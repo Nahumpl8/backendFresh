@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { PKPass } = require('passkit-generator');
 const Clientes = require('../models/Clientes');
+const GoogleWalletObject = require('../models/GoogleWalletObject');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -113,9 +114,24 @@ router.get('/apple/:clientId', async (req, res) => {
             locations: [{ latitude: 20.102220, longitude: -98.761820, relevantText: "🥕 Fresh Market te espera." }],
 
             storeCard: {
+                // HEADER: Puntos a la derecha del logo
+                headerFields: [
+                    {
+                        key: "header_puntos",
+                        label: "",
+                        value: `${numPuntos} pts`,
+                        textAlignment: "PKTextAlignmentRight"
+                    }
+                ],
                 // 1. PUNTOS EN GRANDE (Primary)
                 primaryFields: [
-                    
+                    {
+                        key: "puntos",
+                        label: "PUNTOS DISPONIBLES",
+                        value: numPuntos.toString(),
+                        textAlignment: "PKTextAlignmentCenter",
+                        changeMessage: "Tus puntos han cambiado a %@"
+                    }
                 ],
                 // 2. SELLOS Y NOMBRE (Secondary)
                 secondaryFields: [
@@ -226,10 +242,39 @@ router.get('/google/:clientId', async (req, res) => {
             selectedClassId = CLASS_LEGEND;
         }
 
-        let objectSuffix = numSellos > 5 ? "_LEGEND" : "_NORMAL";
-        const objectId = `${GOOGLE_ISSUER_ID}.${cliente._id}${objectSuffix}_TEST_${Date.now()}`;
+        // ObjectId persistente basado en clienteId (sin timestamp)
+        const objectId = `${GOOGLE_ISSUER_ID}.${cliente._id}`;
 
         const nombreLimpio = cliente.nombre ? cliente.nombre.split('-')[0].trim() : "Cliente Fresh";
+
+        // Verificar si el objeto ya existe
+        let walletObject = await GoogleWalletObject.findOne({ objectId });
+        let version = 1;
+
+        if (walletObject) {
+            // Si existe, incrementar versión y usar la classId existente si no cambió
+            version = walletObject.version + 1;
+            // Si cambió de clase (normal a legend o viceversa), actualizar
+            if (walletObject.classId !== selectedClassId) {
+                await GoogleWalletObject.updateOne(
+                    { objectId },
+                    { classId: selectedClassId, version, updatedAt: new Date() }
+                );
+            } else {
+                await GoogleWalletObject.updateOne(
+                    { objectId },
+                    { version, updatedAt: new Date() }
+                );
+            }
+        } else {
+            // Crear nuevo objeto en BD
+            walletObject = await GoogleWalletObject.create({
+                objectId,
+                clienteId: cliente._id,
+                classId: selectedClassId,
+                version: 1
+            });
+        }
 
         const payload = {
             iss: SERVICE_ACCOUNT.client_email,
@@ -243,7 +288,7 @@ router.get('/google/:clientId', async (req, res) => {
                     classId: selectedClassId,
                     state: 'ACTIVE',
                     accountId: cliente.telefono,
-                    version: 1,
+                    version: version,
                     barcode: {
                         type: 'QR_CODE',
                         value: cliente._id.toString(),
@@ -277,6 +322,42 @@ router.get('/google/:clientId', async (req, res) => {
     } catch (err) {
         console.error("❌ GOOGLE ERROR:", err);
         res.status(500).send('Error interno Google');
+    }
+});
+
+// ==========================================
+// 🤖 GOOGLE WALLET UPDATE ENDPOINT
+// ==========================================
+router.put('/google-update/:clientId', async (req, res) => {
+    try {
+        if (!SERVICE_ACCOUNT) {
+            return res.status(500).json({ success: false, error: 'No hay credenciales de Google Wallet configuradas' });
+        }
+
+        const { clientId } = req.params;
+        const cliente = await Clientes.findById(clientId);
+        
+        if (!cliente) {
+            return res.status(404).json({ success: false, error: 'Cliente no encontrado' });
+        }
+
+        // Importar función de actualización
+        const { updateGoogleWalletObject } = require('../utils/pushGoogle');
+        
+        // Actualizar objeto
+        await updateGoogleWalletObject(clientId);
+
+        res.status(200).json({
+            success: true,
+            message: 'Google Wallet actualizado exitosamente'
+        });
+
+    } catch (err) {
+        console.error("❌ GOOGLE UPDATE ERROR:", err);
+        res.status(500).json({
+            success: false,
+            error: err.message || 'Error al actualizar Google Wallet'
+        });
     }
 });
 
