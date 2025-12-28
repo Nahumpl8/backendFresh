@@ -4,13 +4,13 @@ const ClientesSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
     direccion: { type: String, required: true },
     telefono: { type: String, required: true },
-    email: { 
-        type: String, 
+    email: {
+        type: String,
         default: null,
         lowercase: true, // Normalizar a minúsculas
         trim: true,
         validate: {
-            validator: function(v) {
+            validator: function (v) {
                 // Si no hay email, está bien (es opcional)
                 if (!v) return true;
                 // Si hay email, validar formato
@@ -31,6 +31,8 @@ const ClientesSchema = new mongoose.Schema({
     pedidos: { type: Array },
     totalPedidos: { type: Number },
     totalGastado: { type: Number },
+    hasWallet: { type: Boolean, default: false },
+    walletPlatform: { type: String, enum: ['none', 'apple', 'google', 'both'], default: 'none' },
     puntos: { type: Number, default: 0 },
     semanasSeguidas: { type: Number, default: 0 },
     regaloDisponible: { type: Boolean, default: false },

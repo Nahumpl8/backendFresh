@@ -320,6 +320,12 @@ router.get('/google/:clientId', async (req, res) => {
         const token = jwt.sign(payload, SERVICE_ACCOUNT.private_key, { algorithm: 'RS256' });
         const saveUrl = `https://pay.google.com/gp/v/save/${token}`;
 
+        await Clientes.findByIdAndUpdate(clientId, {
+            hasWallet: true,
+            walletPlatform: 'google' // O lógica para mantener 'both' si ya tenía apple
+        });
+        console.log(`✅ Cliente ${clientId} marcado con hasWallet: true (Google)`);
+
         res.redirect(saveUrl);
 
     } catch (err) {

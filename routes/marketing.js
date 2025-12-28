@@ -1,61 +1,76 @@
-// En routes/marketing.js (nuevo archivo) o routes/wallet.js
-
-// Modelo MarketingCampaign (models/MarketingCampaign.js)
-const mongoose = require('mongoose');
-
-const MarketingCampaignSchema = new mongoose.Schema({
-  title: { type: String, required: true },
-  message: { type: String, required: true },
-  summary: {
-    total: Number,
-    success: Number,
-    failed: Number
-  },
-  sentAt: { type: Date, default: Date.now }
-}, { timestamps: true });
-
-module.exports = mongoose.model('MarketingCampaign', MarketingCampaignSchema);
-
-// Endpoints (en routes/wallet.js o routes/marketing.js)
+const router = require('express').Router();
 const MarketingCampaign = require('../models/MarketingCampaign');
+const WalletDevice = require('../models/WalletDevice');
+const notifyPassUpdate = require('../utils/pushApple'); // Tu función maestra
 
-// GET /api/marketing/history
-router.get('/marketing/history', async (req, res) => {
-  try {
-    const campaigns = await MarketingCampaign.find()
-      .sort({ sentAt: -1 })
-      .limit(50);
-    res.status(200).json(campaigns);
-  } catch (err) {
-    console.error('Error al obtener historial:', err);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
+// 1. OBTENER HISTORIAL (Para el Panel)
+router.get('/history', async (req, res) => {
+    try {
+        const campaigns = await MarketingCampaign.find().sort({ sentAt: -1 }).limit(20);
+        res.json(campaigns);
+    } catch (err) {
+        res.status(500).json({ error: 'Error obteniendo historial' });
+    }
 });
 
-// POST /api/marketing/send
-router.post('/marketing/send', async (req, res) => {
-  try {
-    const { title, message, summary } = req.body;
+// 2. ENVIAR CAMPAÑA MASIVA
+router.post('/send', async (req, res) => {
+    const { title, message } = req.body;
+
+    if (!message) return res.status(400).json({ error: "El mensaje es obligatorio" });
+
+    console.log(`🚀 Iniciando campaña: ${title}`);
+
+    // A. Guardamos la campaña PRIMERO
+    // (Esto es crucial para que appleService.js pueda leer el mensaje nuevo cuando los iPhones pidan actualización)
     const campaign = await MarketingCampaign.create({
-      title,
-      message,
-      summary,
-      sentAt: new Date()
+        title,
+        message,
+        sentAt: new Date()
     });
-    res.status(201).json(campaign);
-  } catch (err) {
-    console.error('Error al guardar campaña:', err);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
+
+    // B. Buscamos a quién enviar
+    // Estrategia: Buscamos todos los dispositivos registrados en Apple
+    // (Tu función notifyPassUpdate ya se encarga de Google si le pasas el ID del cliente)
+    try {
+        // Obtenemos todos los serialNumbers (que son "FRESH-clientId")
+        const devices = await WalletDevice.find({}, 'serialNumber');
+        
+        // Extraemos los IDs de clientes únicos
+        const clientIds = [...new Set(devices.map(d => d.serialNumber.replace('FRESH-', '')))];
+
+        console.log(`📢 Enviando a ${clientIds.length} clientes únicos...`);
+
+        // C. Disparamos las notificaciones en segundo plano
+        // No usamos await dentro del map para que sea rápido, pero usamos Promise.allSettled
+        // para contar resultados.
+        const results = await Promise.allSettled(clientIds.map(clientId => notifyPassUpdate(clientId)));
+
+        // D. Calculamos estadísticas
+        const successCount = results.filter(r => r.status === 'fulfilled').length;
+        const failedCount = results.filter(r => r.status === 'rejected').length;
+
+        // E. Actualizamos estadísticas en la BD
+        campaign.stats = {
+            total: clientIds.length,
+            success: successCount,
+            failed: failedCount
+        };
+        await campaign.save();
+
+        res.json({ success: true, campaign });
+
+    } catch (err) {
+        console.error("❌ Error en campaña masiva:", err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
-// POST /api/marketing/location-text (opcional, para guardar texto de ubicación)
-router.post('/marketing/location-text', async (req, res) => {
-  try {
-    // Aquí podrías guardar el texto en una configuración
-    // Por ahora solo retornamos éxito
-    res.status(200).json({ success: true, message: 'Texto de ubicación actualizado' });
-  } catch (err) {
-    res.status(500).json({ error: 'Error del servidor' });
-  }
+// 3. ACTUALIZAR TEXTO GPS (Opcional, si usas la pestaña de Geolocalización)
+router.post('/location-text', async (req, res) => {
+    // Podrías guardar esto en otra colección de 'Config'
+    // Por ahora solo devolvemos éxito para que el front no falle
+    res.json({ success: true });
 });
+
+module.exports = router;

@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const WalletDevice = require('../models/WalletDevice');
 const Clientes = require('../models/Clientes');
+const MarketingCampaign = require('../models/MarketingCampaign'); 
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
@@ -34,6 +35,11 @@ router.post('/v1/devices/:deviceId/registrations/:passTypeId/:serialNumber', asy
             { pushToken: pushToken, passTypeIdentifier: passTypeId },
             { upsert: true, new: true }
         );
+
+        // Actualizar flag en cliente
+        const clientId = serialNumber.replace('FRESH-', '');
+        await Clientes.findByIdAndUpdate(clientId, { hasWallet: true, walletPlatform: 'apple' });
+
         res.sendStatus(201);
     } catch (err) {
         console.error("❌ Error registrando:", err);
@@ -55,7 +61,7 @@ router.get('/v1/devices/:deviceId/registrations/:passTypeId', async (req, res) =
     }
 });
 
-// 3. ENTREGA (CON DISEÑO LE DUO)
+// 3. ENTREGA (CORREGIDA PARA MARKETING)
 router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
     try {
         const { serialNumber } = req.params;
@@ -66,20 +72,47 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
         const cliente = await Clientes.findById(clientId);
         if (!cliente) return res.sendStatus(404);
 
-        // CACHE CONTROL
-        const lastModified = new Date(cliente.updatedAt);
+        // ------------------------------------------------------------
+        // 📢 1. OBTENER CAMPAÑA Y CALCULAR FECHA REAL
+        // ------------------------------------------------------------
+        let promoTitle = "📢 NOVEDADES";
+        let promoMessage = "🥕 ¡Bienvenido a Fresh Market!";
+        let campaignDate = new Date(0); // Fecha muy vieja por defecto
+
+        try {
+            const lastCampaign = await MarketingCampaign.findOne().sort({ sentAt: -1 });
+            if (lastCampaign) {
+                promoTitle = "📢 " + (lastCampaign.title || "NOVEDADES");
+                promoMessage = lastCampaign.message;
+                campaignDate = new Date(lastCampaign.sentAt);
+            }
+        } catch (e) {
+            console.error("Error leyendo campaña:", e);
+        }
+
+        // ------------------------------------------------------------
+        // 🚦 2. CACHE CONTROL INTELIGENTE
+        // ------------------------------------------------------------
+        // La fecha de modificación es la MAYOR entre: actualización del cliente O última campaña
+        const clientDate = new Date(cliente.updatedAt);
+        const lastModified = clientDate > campaignDate ? clientDate : campaignDate;
+        
         const lastModifiedTime = Math.floor(lastModified.getTime() / 1000);
         const ifModifiedSince = req.headers['if-modified-since'];
+
         if (ifModifiedSince) {
             const ifModifiedTime = Math.floor(new Date(ifModifiedSince).getTime() / 1000);
             if (lastModifiedTime <= ifModifiedTime) {
-                console.log(`⛔ 304 Not Modified para ${serialNumber}`);
+                console.log(`⛔ 304 Not Modified para ${serialNumber} (Cliente o Campaña sin cambios)`);
                 return res.status(304).end();
             }
         }
 
-        console.log(`📥 iPhone actualizando: ${serialNumber}`);
+        console.log(`📥 iPhone descargando actualización: ${serialNumber}`);
 
+        // ------------------------------------------------------------
+        // 🎨 3. GENERACIÓN DEL PASE
+        // ------------------------------------------------------------
         const baseDir = path.resolve(__dirname, '../assets/freshmarket');
         const certsDir = path.resolve(__dirname, '../certs');
         const nivelesDir = path.join(baseDir, 'niveles');
@@ -133,21 +166,15 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
             labelColor: appleLabelColor,
             webServiceURL: WEB_SERVICE_URL,
             authenticationToken: authToken,
+            // Truco: updateTrigger fuerza al binario a cambiar si la fecha cambia
             userInfo: { generatedAt: new Date().toISOString(), updateTrigger: lastModifiedTime },
             locations: [{ latitude: 20.102220, longitude: -98.761820, relevantText: "🥕 Fresh Market te espera." }],
             
             storeCard: {
-                // HEADER: Puntos a la derecha del logo
                 headerFields: [
-                    {
-                        key: "header_puntos",
-                        label: "Tus puntos",
-                        value: `${numPuntos} pts`,
-                        textAlignment: "PKTextAlignmentRight"
-                    }
+                    { key: "header_puntos", label: "Tus puntos", value: `${numPuntos} pts`, textAlignment: "PKTextAlignmentRight" }
                 ],
-                primaryFields: [
-                ],
+                primaryFields: [],
                 secondaryFields: [
                     { key: 'balance_sellos', label: 'MIS SELLOS', value: `${numSellos} de 8`, textAlignment: "PKTextAlignmentLeft", changeMessage: "¡Actualización! Ahora tienes %@ sellos 🥕" },
                     { key: 'nombre', label: 'CLIENTE', value: nombreLimpio, textAlignment: "PKTextAlignmentRight" }
@@ -155,8 +182,15 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                 auxiliaryFields: [
                     { key: "status", label: "ESTATUS", value: statusText, textAlignment: "PKTextAlignmentCenter" }
                 ],
-                // DISEÑO TRASERO ESTILO LE DUO
                 backFields: [
+                    // A. CAMPAÑA DE MARKETING
+                    {
+                        key: "marketing_promo",
+                        label: promoTitle,
+                        value: promoMessage,
+                        textAlignment: "PKTextAlignmentLeft",
+                        changeMessage: "%@" // 🔔 ¡IMPORTANTE PARA QUE VIBRE!
+                    },
                     {
                         key: "quick_links",
                         label: "📱 CONTACTO RÁPIDO",
@@ -166,7 +200,7 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                     {
                         key: "how_it_works",
                         label: "🙌 TU TARJETA FRESH",
-                        value: "🥕 Recibe 1 sello por compras mayores a $285.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico (no son canjeables por dinero en efectivo).",
+                        value: "🥕 Recibe 1 sello por compras mayores a $285.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico.",
                         textAlignment: "PKTextAlignmentLeft"
                     },
                     {
