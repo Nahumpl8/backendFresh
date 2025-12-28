@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { PKPass } = require('passkit-generator');
 const Clientes = require('../models/Clientes');
 const GoogleWalletObject = require('../models/GoogleWalletObject');
+const notifyPassUpdate = require('../utils/pushApple');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -359,6 +360,126 @@ router.put('/google-update/:clientId', async (req, res) => {
         res.status(500).json({
             success: false,
             error: err.message || 'Error al actualizar Google Wallet'
+        });
+    }
+});
+
+// ==========================================
+// 🔔 NOTIFICACIÓN INDIVIDUAL
+// ==========================================
+router.post('/notify/:clientId', async (req, res) => {
+    try {
+        const { clientId } = req.params;
+        
+        // Verificar que el cliente existe
+        const cliente = await Clientes.findById(clientId);
+        if (!cliente) {
+            return res.status(404).json({ 
+                success: false, 
+                error: 'Cliente no encontrado' 
+            });
+        }
+        
+        // Enviar notificación usando notifyPassUpdate (Apple + Google)
+        await notifyPassUpdate(clientId);
+        
+        res.status(200).json({
+            success: true,
+            message: 'Notificación enviada exitosamente',
+            cliente: {
+                _id: cliente._id,
+                nombre: cliente.nombre,
+                telefono: cliente.telefono
+            }
+        });
+        
+    } catch (err) {
+        console.error("❌ ERROR NOTIFICACIÓN INDIVIDUAL:", err);
+        res.status(500).json({
+            success: false,
+            error: err.message || 'Error al enviar notificación'
+        });
+    }
+});
+
+// ==========================================
+// 🔔 NOTIFICACIÓN MASIVA
+// ==========================================
+router.post('/notify-bulk', async (req, res) => {
+    try {
+        const { clientIds } = req.body;
+        
+        // Validar que se enviaron clientIds
+        if (!Array.isArray(clientIds) || clientIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Se requiere un array de clientIds en el body'
+            });
+        }
+        
+        const success = [];
+        const failed = [];
+        
+        // Procesar cada cliente
+        for (const clientId of clientIds) {
+            try {
+                // Verificar que el cliente existe
+                const cliente = await Clientes.findById(clientId);
+                
+                if (!cliente) {
+                    failed.push({
+                        clientId,
+                        nombre: 'No encontrado',
+                        error: 'Cliente no encontrado'
+                    });
+                    continue;
+                }
+                
+                // Enviar notificación
+                await notifyPassUpdate(clientId);
+                
+                success.push({
+                    clientId,
+                    nombre: cliente.nombre,
+                    telefono: cliente.telefono
+                });
+                
+            } catch (err) {
+                console.error(`❌ Error notificando cliente ${clientId}:`, err);
+                
+                // Intentar obtener el nombre del cliente para el error
+                let nombre = 'Desconocido';
+                try {
+                    const cliente = await Clientes.findById(clientId);
+                    if (cliente) nombre = cliente.nombre;
+                } catch (e) {
+                    // Si falla, usar nombre por defecto
+                }
+                
+                failed.push({
+                    clientId,
+                    nombre,
+                    error: err.message || 'Error al enviar notificación'
+                });
+            }
+        }
+        
+        res.status(200).json({
+            success: true,
+            summary: {
+                total: clientIds.length,
+                success: success.length,
+                failed: failed.length
+            },
+            success,
+            failed
+        });
+        
+    } catch (err) {
+        console.error("❌ ERROR NOTIFICACIÓN MASIVA:", err);
+        res.status(500).json({
+            success: false,
+            error: err.message || 'Error al procesar notificaciones masivas'
         });
     }
 });

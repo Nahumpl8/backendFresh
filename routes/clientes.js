@@ -307,4 +307,86 @@ router.get('/stats', async (req, res) => {
     }
 });
 
+// Obtener clientes filtrados para notificaciones wallet
+router.get('/filtered', async (req, res) => {
+    try {
+        const { filter = 'todos' } = req.query;
+        
+        // Obtener todos los clientes
+        const allClientes = await Clientes.find().select('_id nombre telefono');
+        
+        // Si el filtro es 'todos', retornar todos con última fecha de pedido
+        if (filter === 'todos') {
+            const clientesConUltimoPedido = await Promise.all(
+                allClientes.map(async (cliente) => {
+                    // Buscar último pedido del cliente (usando regex para coincidir con el teléfono)
+                    const telefonoLimpio = limpiarTelefono(cliente.telefono);
+                    const ultimoPedido = await Pedido.findOne({
+                        telefono: { $regex: telefonoLimpio + '$' }
+                    }).sort({ createdAt: -1 });
+                    
+                    return {
+                        _id: cliente._id,
+                        nombre: cliente.nombre,
+                        telefono: cliente.telefono,
+                        ultimoPedido: ultimoPedido?.createdAt || null
+                    };
+                })
+            );
+            
+            return res.status(200).json(clientesConUltimoPedido);
+        }
+        
+        // Calcular fecha límite según el filtro
+        const ahora = new Date();
+        let fechaLimite;
+        
+        if (filter === 'sinPedidoSemana') {
+            fechaLimite = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000); // 7 días atrás
+        } else if (filter === 'sinPedido3Semanas') {
+            fechaLimite = new Date(ahora.getTime() - 21 * 24 * 60 * 60 * 1000); // 21 días atrás
+        } else {
+            return res.status(400).json({ error: 'Filtro no válido. Use: todos, sinPedidoSemana, sinPedido3Semanas' });
+        }
+        
+        // Filtrar clientes que no tienen pedidos en el período
+        const clientesFiltrados = await Promise.all(
+            allClientes.map(async (cliente) => {
+                // Buscar último pedido del cliente dentro del período
+                const telefonoLimpio = limpiarTelefono(cliente.telefono);
+                const ultimoPedido = await Pedido.findOne({
+                    telefono: { $regex: telefonoLimpio + '$' },
+                    createdAt: { $gte: fechaLimite }
+                }).sort({ createdAt: -1 });
+                
+                // Si no hay pedido en el período, incluir al cliente
+                if (!ultimoPedido) {
+                    // Obtener último pedido histórico (fuera del período) para mostrar
+                    const ultimoPedidoHistorico = await Pedido.findOne({
+                        telefono: { $regex: telefonoLimpio + '$' }
+                    }).sort({ createdAt: -1 });
+                    
+                    return {
+                        _id: cliente._id,
+                        nombre: cliente.nombre,
+                        telefono: cliente.telefono,
+                        ultimoPedido: ultimoPedidoHistorico?.createdAt || null
+                    };
+                }
+                
+                return null;
+            })
+        );
+        
+        // Filtrar los nulls
+        const resultado = clientesFiltrados.filter(c => c !== null);
+        
+        res.status(200).json(resultado);
+        
+    } catch (err) {
+        console.error('Error al obtener clientes filtrados:', err);
+        res.status(500).json({ error: 'Error del servidor' });
+    }
+});
+
 module.exports = router;
