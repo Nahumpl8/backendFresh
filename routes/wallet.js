@@ -210,7 +210,7 @@ router.get('/apple/:clientId', async (req, res) => {
                     format: "PKBarcodeFormatQR",
                     message: cliente._id.toString(),
                     messageEncoding: "iso-8859-1",
-                    altText: nombreLimpio
+                    altText: 'fidelity.mx'
                 }
             ]
         };
