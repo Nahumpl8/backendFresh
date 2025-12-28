@@ -211,6 +211,51 @@ router.get('/', async (req, res) => {
     }
 });
 
+
+// routes/clientes.js
+
+// ... tus otras rutas ...
+
+// 🔍 BÚSQUEDA OPTIMIZADA (Para el autocompletado)
+// GET /api/clientes/search?q=termino
+router.get('/search', async (req, res) => {
+    try {
+        const query = req.query.q;
+        if (!query || query.length < 2) return res.json([]);
+
+        // Creamos una expresión regular para buscar sin importar mayúsculas/minúsculas
+        // Escapamos caracteres especiales por seguridad
+        const regex = new RegExp(query.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&"), 'i');
+
+        const clientes = await Clientes.find({
+            $or: [
+                { nombre: regex },
+                { telefono: regex },
+                { telefonoSecundario: regex }
+            ]
+        })
+        .select('nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet misDirecciones ultimaSemanaRegistrada premiosPendientes')
+        .limit(20) // ⚠️ IMPORTANTE: Solo traemos 20 para no saturar
+        .lean(); // .lean() lo hace más rápido al devolver objetos JS puros
+
+        // Verificamos Wallet solo para estos 20 (muy rápido)
+        const WalletDevice = require('../models/WalletDevice'); // Asegúrate de tener el modelo importado
+        
+        const clientesEnriquecidos = await Promise.all(clientes.map(async (c) => {
+            const serialNumber = `FRESH-${c._id}`;
+            const deviceCount = await WalletDevice.countDocuments({ serialNumber });
+            return { ...c, hasWallet: deviceCount > 0 };
+        }));
+
+        res.json(clientesEnriquecidos);
+
+    } catch (err) {
+        console.error("Error en búsqueda:", err);
+        res.status(500).json([]);
+    }
+});
+
+
 // --- RUTA NUEVA: AGREGAR DIRECCIÓN EXTRA ---
 router.put('/add-address/:id', async (req, res) => {
     try {
