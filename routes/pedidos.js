@@ -226,4 +226,32 @@ router.get('/semanaPasada', async (req, res) => {
     res.json(pedidosLastWeek);
 });
 
+
+// ... (tus otras rutas)
+
+// 🔍 BUSCAR PEDIDOS POR FECHA EXACTA (OPTIMIZADO)
+// GET /api/pedidos/buscar-fecha?fecha=lunes, 22 Diciembre 2025
+router.get('/buscar-fecha', async (req, res) => {
+    try {
+        const fechaBusqueda = req.query.fecha;
+        
+        if (!fechaBusqueda) {
+            return res.status(400).json([]);
+        }
+
+        // Buscamos coincidencia exacta o parcial en el string de fecha
+        // $options: 'i' hace que no importen mayúsculas/minúsculas
+        const pedidos = await Pedido.find({ 
+            fecha: { $regex: fechaBusqueda, $options: 'i' } 
+        }).sort({ cliente: 1 }); // Ordenamos alfabéticamente por cliente directo desde DB
+
+        res.json(pedidos);
+
+    } catch (err) {
+        console.error("Error buscando por fecha:", err);
+        res.status(500).json({ error: 'Error al buscar pedidos' });
+    }
+});
+
+
 module.exports = router;
