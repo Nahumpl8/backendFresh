@@ -314,6 +314,33 @@ router.get('/sync-wallets', async (req, res) => {
     } catch (err) {
         res.status(500).json(err);
     }
+
+
+});
+
+
+// GET /api/clientes/debug-google
+router.get('/debug-google', async (req, res) => {
+    try {
+        const GoogleWalletObject = require('../models/GoogleWalletObject');
+        
+        // 1. Traer TODOS los objetos de Google para ver su estructura
+        const all = await GoogleWalletObject.find({});
+        
+        // 2. Buscar específicamente al de Don James
+        const targetId = '69519ba81db92467a91a265d';
+        const specific = await GoogleWalletObject.findOne({ clienteId: targetId });
+        
+        res.json({
+            totalObjects: all.length,
+            structureExample: all[0], // Para ver si el campo se llama 'clienteId', 'clientId', 'user_id', etc.
+            foundSpecific: specific ? "SÍ ENCONTRADO" : "NO ENCONTRADO",
+            targetIdBuscado: targetId,
+            allIds: all.map(o => o.clienteId) // Lista de todos los IDs guardados
+        });
+    } catch (err) {
+        res.status(500).json(err);
+    }
 });
 
 // 🔍 BÚSQUEDA OPTIMIZADA

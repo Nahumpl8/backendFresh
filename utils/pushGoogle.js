@@ -10,7 +10,7 @@ try {
         SERVICE_ACCOUNT = JSON.parse(process.env.GOOGLE_KEY_JSON);
     } else {
         const path = require('path');
-        const keyPath = path.join(__dirname, '../keys.json');
+        const keyPath = path.join(__dirname, '../keys.json'); // Ajusta la ruta si es necesario
         if (require('fs').existsSync(keyPath)) {
             SERVICE_ACCOUNT = require('../keys.json');
         }
@@ -20,15 +20,14 @@ try {
 }
 
 const GOOGLE_ISSUER_ID = '3388000000023046225';
+// Asegúrate de que esta URL sea la de producción
 const BASE_URL = process.env.BASE_URL || 'https://backendfresh-production.up.railway.app';
 const CLASS_NORMAL = `${GOOGLE_ISSUER_ID}.fresh_market_loyal`;
 const CLASS_LEGEND = `${GOOGLE_ISSUER_ID}.fresh_market_legend`;
 
 // Obtener token de acceso de Google
 async function getGoogleAccessToken() {
-    if (!SERVICE_ACCOUNT) {
-        throw new Error('No hay credenciales de Google Wallet configuradas');
-    }
+    if (!SERVICE_ACCOUNT) throw new Error('No hay credenciales de Google Wallet');
 
     const token = jwt.sign(
         {
@@ -59,43 +58,49 @@ async function updateGoogleWalletObject(clientId) {
     }
 
     try {
-        // Buscar cliente
+        // 1. Buscar cliente
         const cliente = await Clientes.findById(clientId);
         if (!cliente) {
-            console.log(`⚠️ Cliente ${clientId} no encontrado`);
+            console.log(`⚠️ Cliente ${clientId} no encontrado en DB`);
             return;
         }
 
-        // Buscar objeto de wallet existente
-        const objectId = `${GOOGLE_ISSUER_ID}.${cliente._id}`;
-        const walletObject = await GoogleWalletObject.findOne({ objectId });
+        // =========================================================
+        // 🔑 EL CAMBIO CLAVE ESTÁ AQUÍ
+        // Buscamos por el ID DEL CLIENTE, no por el ID del objeto inventado
+        // =========================================================
+        let walletObject = await GoogleWalletObject.findOne({ clienteId: clientId });
+
+        // Fallback: Si no lo encontramos por clienteId, intentamos la forma vieja por si acaso
+        if (!walletObject) {
+            const constructedId = `${GOOGLE_ISSUER_ID}.${cliente._id}`;
+            walletObject = await GoogleWalletObject.findOne({ objectId: constructedId });
+        }
 
         if (!walletObject) {
             console.log(`⚠️ No hay objeto de Google Wallet para cliente ${clientId}`);
-            return;
+            return; // Aquí se detiene si no encuentra nada
         }
 
-        // Calcular datos actualizados
+        // =========================================================
+        
+        // 3. Calcular datos
         let numSellos = cliente.sellos || 0;
         if (numSellos > 8) numSellos = 8;
-
         const imageName = `${numSellos}-sello.png`;
         const heroImageUrl = `${BASE_URL}/public/freshmarket/niveles/${imageName}`;
-
-        let selectedClassId = CLASS_NORMAL;
-        if (numSellos > 5) {
-            selectedClassId = CLASS_LEGEND;
-        }
-
+        let selectedClassId = numSellos > 5 ? CLASS_LEGEND : CLASS_NORMAL;
+        
         const nombreLimpio = cliente.nombre ? cliente.nombre.split('-')[0].trim() : "Cliente Fresh";
+        const realObjectId = walletObject.objectId; // Usamos el ID real de la base de datos
 
-        // Construir objeto actualizado
+        // 4. Construir JSON para Google
         const updatedObject = {
-            id: objectId,
+            id: realObjectId,
             classId: selectedClassId,
             state: 'ACTIVE',
             accountId: cliente.telefono,
-            version: walletObject.version + 1, // Incrementar versión
+            version: walletObject.version + 1,
             barcode: {
                 type: 'QR_CODE',
                 value: cliente._id.toString(),
@@ -113,18 +118,16 @@ async function updateGoogleWalletObject(clientId) {
             heroImage: { sourceUri: { uri: heroImageUrl } },
             linksModuleData: {
                 uris: [
-                    { kind: "i18n.WALLET_URI_PHONE", uri: "WhatsApp: wa.me/7712346620", description: "Llamar a Fresh Market" },
+                    { kind: "i18n.WALLET_URI_PHONE", uri: "tel:7711234567", description: "Llamar" },
                     { kind: "i18n.WALLET_URI_WEB", uri: "https://facebook.com/freshmarketp", description: "Facebook" }
                 ]
             }
         };
 
-        // Obtener token de acceso
+        // 5. Enviar a Google
         const accessToken = await getGoogleAccessToken();
-
-        // Actualizar objeto usando PUT
         await axios.put(
-            `https://walletobjects.googleapis.com/walletobjects/v1/loyaltyObject/${objectId}`,
+            `https://walletobjects.googleapis.com/walletobjects/v1/loyaltyObject/${realObjectId}`,
             updatedObject,
             {
                 headers: {
@@ -134,9 +137,9 @@ async function updateGoogleWalletObject(clientId) {
             }
         );
 
-        // Actualizar en BD
+        // 6. Guardar en nuestra DB
         await GoogleWalletObject.findOneAndUpdate(
-            { objectId },
+            { _id: walletObject._id },
             {
                 classId: selectedClassId,
                 version: walletObject.version + 1,
@@ -147,16 +150,17 @@ async function updateGoogleWalletObject(clientId) {
         console.log(`✅ Google Wallet actualizado para cliente ${clientId}`);
 
     } catch (err) {
-        console.error(`❌ Error actualizando Google Wallet para ${clientId}:`, err.response?.data || err.message);
+        const googleError = err.response?.data?.error?.message || err.message;
+        console.error(`❌ Error Google API (${clientId}):`, googleError);
     }
 }
 
-// Notificar cambios a Google Wallet
+// Notificar cambios
 async function notifyGoogleWalletUpdate(clientId) {
     try {
         await updateGoogleWalletObject(clientId);
     } catch (err) {
-        console.error('❌ Error en notificación Google Wallet:', err);
+        console.error('❌ Error fatal en notifyGoogleWalletUpdate:', err);
     }
 }
 
@@ -164,4 +168,3 @@ module.exports = {
     updateGoogleWalletObject,
     notifyGoogleWalletUpdate
 };
-
