@@ -106,4 +106,20 @@ router.post('/location-text', async (req, res) => {
     }
 });
 
+// 4. LEER TEXTO GPS (AGREGA ESTO 🟢)
+router.get('/location-text', async (req, res) => {
+    try {
+        // Buscamos la misma clave 'gps_message' que usaste en el POST
+        const config = await Config.findOne({ key: 'gps_message' });
+        
+        res.json({ 
+            // Si existe, devolvemos el valor. Si no, texto default.
+            text: config ? config.value : '🥕 Fresh Market te espera.' 
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error leyendo configuración GPS' });
+    }
+});
+
 module.exports = router;
