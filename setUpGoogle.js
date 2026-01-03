@@ -11,7 +11,7 @@ const classId = `${ISSUER_ID}.fresh_market_loyal`;
 const loyaltyClass = {
   "id": classId,
   "issuerName": "Fresh Market",
-  "programName": "Fidelity Rewards",
+  "programName": "Fidelify Rewards",
   "programLogo": {
     "sourceUri": {
       "uri": "https://i.ibb.co/1G5kMjc4/logo.png" 

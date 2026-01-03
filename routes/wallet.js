@@ -292,7 +292,7 @@ router.get('/google/:clientId', async (req, res) => {
                     barcode: {
                         type: 'QR_CODE',
                         value: cliente._id.toString(),
-                        alternateText: "fidelity.mx"
+                        alternateText: "Fidelify.mx"
                     },
                     accountName: nombreLimpio,
                     loyaltyPoints: {

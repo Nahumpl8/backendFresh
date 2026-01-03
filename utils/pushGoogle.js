@@ -104,7 +104,7 @@ async function updateGoogleWalletObject(clientId) {
             barcode: {
                 type: 'QR_CODE',
                 value: cliente._id.toString(),
-                alternateText: "fidelity.mx"
+                alternateText: "Fidelify.mx"
             },
             accountName: nombreLimpio,
             loyaltyPoints: {
