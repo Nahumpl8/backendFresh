@@ -181,52 +181,91 @@ router.put('/canjear/:telefono', async (req, res) => {
     }
 });
 
-// OBTENER CLIENTES PAGINADOS (Rápido ⚡️)
+// OBTENER CLIENTES (OPTIMIZADO Y SEGURO)
 router.get('/', async (req, res) => {
     try {
-        // Leemos parámetros de paginación (por defecto página 1, 20 items)
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 20;
-        const skip = (page - 1) * limit;
+        const { page, limit } = req.query;
 
-        // 1. Traer solo el segmento necesario, ordenados por fecha (nuevo -> viejo)
-        const clientes = await Clientes.find()
-            .select('nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet ruletaTokens createdAt') // Campos necesarios
-            .sort({ createdAt: -1 }) // ⚠️ Ordenar del más nuevo al más viejo
-            .skip(skip)
-            .limit(limit)
-            .lean(); // Objetos ligeros
+        // Selección de campos optimizada (Incluye walletPlatform para las gráficas)
+        const campos = 'nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet walletPlatform misDirecciones ultimaSemanaRegistrada premiosPendientes createdAt';
 
-        // 2. Contar total para saber cuántas páginas hay
-        const total = await Clientes.countDocuments();
+        // MODO 1: PAGINACIÓN (Para la tabla de Clientes)
+        if (page && limit) {
+            const pageNum = parseInt(page);
+            const limitNum = parseInt(limit);
+            const skip = (pageNum - 1) * limitNum;
 
-        // 3. Enriquecer con hasWallet (Solo para estos 20)
-        // Nota: Si ya guardas hasWallet en el modelo Clientes (como hicimos antes), este paso es opcional.
-        // Si no confías en tu dato guardado, déjalo. Si confías, bórralo para más velocidad.
-        const WalletDevice = require('../models/WalletDevice');
-        const clientesConWallet = await Promise.all(clientes.map(async (c) => {
-            // Si ya tiene el flag en DB úsalo, sino verifica en tiempo real (más lento)
-            if (c.hasWallet) return c; 
-            
-            const serialNumber = `FRESH-${c._id}`;
-            const deviceCount = await WalletDevice.countDocuments({ serialNumber });
-            return { ...c, hasWallet: deviceCount > 0 };
-        }));
+            const clientes = await Clientes.find()
+                .select(campos)
+                .sort({ createdAt: -1 }) // Los más nuevos primero
+                .skip(skip)
+                .limit(limitNum)
+                .lean();
 
-        res.status(200).json({
-            data: clientesConWallet,
-            currentPage: page,
-            totalPages: Math.ceil(total / limit),
-            totalItems: total
-        });
+            const total = await Clientes.countDocuments();
+
+            return res.status(200).json({
+                data: clientes,
+                totalPages: Math.ceil(total / limitNum),
+                currentPage: pageNum,
+                totalItems: total
+            });
+        }
+
+        // MODO 2: SIN PAGINACIÓN O LÍMITE ALTO (Para el Dashboard de Marketing)
+        // Usamos .lean() para que sea ultra rápido
+        let query = Clientes.find().select(campos).sort({ createdAt: -1 });
+
+        if (limit) {
+            query.limit(parseInt(limit));
+        }
+
+        const clientes = await query.lean();
+        res.status(200).json(clientes);
 
     } catch (err) {
         console.error("Error cargando clientes:", err);
         res.status(500).json({ error: 'Error al obtener clientes.' });
     }
 });
+// SINCRONIZAR CLIENTES CON WALLET DEVICES
 
+router.get('/sync-wallets', async (req, res) => {
+    try {
+        const WalletDevice = require('../models/WalletDevice');
+        const devices = await WalletDevice.find({});
+        
+        let updatedCount = 0;
+        let nombres = []; // Para guardar nombres
 
+        for (const device of devices) {
+            const cleanId = device.serialNumber.replace('FRESH-', '').replace('LEDUO-', '');
+            
+            // Buscamos el nombre para el log
+            const cliente = await Clientes.findByIdAndUpdate(cleanId, {
+                hasWallet: true,
+                walletPlatform: 'apple' 
+            }, { new: true }); // new: true devuelve el cliente actualizado
+
+            if (cliente) {
+                nombres.push(cliente.nombre);
+                updatedCount++;
+            }
+        }
+
+        console.log("👥 Clientes con Wallet:", nombres); // Esto saldrá en los logs de Railway
+
+        res.json({ 
+            success: true, 
+            message: `✅ Sincronizados ${updatedCount}.`,
+            nombres: nombres // También lo devolvemos al navegador para que lo veas fácil
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
 // routes/clientes.js
 
 // ... tus otras rutas ...
@@ -250,9 +289,9 @@ router.get('/search', async (req, res) => {
                 { telefonoSecundario: regex }
             ]
         })
-        .select('nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet misDirecciones ultimaSemanaRegistrada premiosPendientes')
-        .limit(20) // IMPORTANTE: Límite para velocidad
-        .lean(); 
+            .select('nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet misDirecciones ultimaSemanaRegistrada premiosPendientes')
+            .limit(20) // IMPORTANTE: Límite para velocidad
+            .lean();
 
         // Enriquecer con hasWallet (opcional si ya lo tienes guardado en DB)
         const WalletDevice = require('../models/WalletDevice');

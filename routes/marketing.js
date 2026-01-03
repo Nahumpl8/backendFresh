@@ -1,9 +1,10 @@
 const router = require('express').Router();
 const MarketingCampaign = require('../models/MarketingCampaign');
 const WalletDevice = require('../models/WalletDevice');
-const notifyPassUpdate = require('../utils/pushApple'); // Tu función maestra
+const Config = require('../models/Config'); // 👈 IMPORTANTE: Para guardar el GPS
+const notifyPassUpdate = require('../utils/pushApple'); 
 
-// 1. OBTENER HISTORIAL (Para el Panel)
+// 1. OBTENER HISTORIAL
 router.get('/history', async (req, res) => {
     try {
         const campaigns = await MarketingCampaign.find().sort({ sentAt: -1 }).limit(20);
@@ -13,46 +14,62 @@ router.get('/history', async (req, res) => {
     }
 });
 
-// 2. ENVIAR CAMPAÑA MASIVA
+// 2. ENVIAR CAMPAÑA (INTELIGENTE 🧠)
 router.post('/send', async (req, res) => {
-    const { title, message } = req.body;
+    // Recibimos title, message Y la lista de destinatarios (clientIds)
+    const { title, message, clientIds, summary } = req.body;
 
     if (!message) return res.status(400).json({ error: "El mensaje es obligatorio" });
 
-    console.log(`🚀 Iniciando campaña: ${title}`);
+    // Si el frontend ya hizo el trabajo sucio (notify-bulk) y solo nos manda el resumen,
+    // solo guardamos el historial y salimos. Evitamos doble notificación.
+    if (summary) {
+        console.log(`📝 Guardando historial de campaña ya enviada: ${title}`);
+        const campaign = await MarketingCampaign.create({
+            title,
+            message,
+            sentAt: new Date(),
+            stats: summary
+        });
+        return res.json({ success: true, campaign });
+    }
 
-    // A. Guardamos la campaña PRIMERO
-    // (Esto es crucial para que appleService.js pueda leer el mensaje nuevo cuando los iPhones pidan actualización)
+    // --- SI LLEGAMOS AQUÍ, ES PORQUE EL BACKEND DEBE ENVIAR LAS NOTIFICACIONES ---
+    
+    console.log(`🚀 Iniciando campaña Backend: ${title}`);
+
+    // A. Guardamos la campaña PRIMERO (Para que appleService la lea)
     const campaign = await MarketingCampaign.create({
         title,
         message,
         sentAt: new Date()
     });
 
-    // B. Buscamos a quién enviar
-    // Estrategia: Buscamos todos los dispositivos registrados en Apple
-    // (Tu función notifyPassUpdate ya se encarga de Google si le pasas el ID del cliente)
     try {
-        // Obtenemos todos los serialNumbers (que son "FRESH-clientId")
-        const devices = await WalletDevice.find({}, 'serialNumber');
-        
-        // Extraemos los IDs de clientes únicos
-        const clientIds = [...new Set(devices.map(d => d.serialNumber.replace('FRESH-', '')))];
+        let targets = [];
 
-        console.log(`📢 Enviando a ${clientIds.length} clientes únicos...`);
+        // B. Definir a quién enviamos
+        if (clientIds && Array.isArray(clientIds) && clientIds.length > 0) {
+            // Opción 1: El frontend nos dijo a quién (Filtros: Nuevos, Leales, etc.)
+            console.log(`🎯 Enviando a lista filtrada de ${clientIds.length} clientes.`);
+            targets = clientIds;
+        } else {
+            // Opción 2: Enviar a TODOS (Broadcast)
+            console.log(`📢 Enviando a TODOS los dispositivos.`);
+            const devices = await WalletDevice.find({}, 'serialNumber');
+            targets = [...new Set(devices.map(d => d.serialNumber.replace('FRESH-', '')))];
+        }
 
-        // C. Disparamos las notificaciones en segundo plano
-        // No usamos await dentro del map para que sea rápido, pero usamos Promise.allSettled
-        // para contar resultados.
-        const results = await Promise.allSettled(clientIds.map(clientId => notifyPassUpdate(clientId)));
+        // C. Disparar notificaciones
+        const results = await Promise.allSettled(targets.map(id => notifyPassUpdate(id)));
 
-        // D. Calculamos estadísticas
+        // D. Estadísticas
         const successCount = results.filter(r => r.status === 'fulfilled').length;
         const failedCount = results.filter(r => r.status === 'rejected').length;
 
-        // E. Actualizamos estadísticas en la BD
+        // E. Actualizar historial
         campaign.stats = {
-            total: clientIds.length,
+            total: targets.length,
             success: successCount,
             failed: failedCount
         };
@@ -61,16 +78,32 @@ router.post('/send', async (req, res) => {
         res.json({ success: true, campaign });
 
     } catch (err) {
-        console.error("❌ Error en campaña masiva:", err);
+        console.error("❌ Error en campaña:", err);
         res.status(500).json({ error: err.message });
     }
 });
 
-// 3. ACTUALIZAR TEXTO GPS (Opcional, si usas la pestaña de Geolocalización)
+// 3. ACTUALIZAR TEXTO GPS (AHORA SÍ GUARDA 💾)
 router.post('/location-text', async (req, res) => {
-    // Podrías guardar esto en otra colección de 'Config'
-    // Por ahora solo devolvemos éxito para que el front no falle
-    res.json({ success: true });
+    try {
+        const { text } = req.body;
+        
+        if (!text) return res.status(400).json({ error: "Texto requerido" });
+
+        // Guardamos en la colección Config para que appleService.js lo lea
+        await Config.findOneAndUpdate(
+            { key: 'gps_message' },
+            { value: text, updatedAt: new Date() },
+            { upsert: true, new: true }
+        );
+
+        console.log(`📍 Mensaje GPS actualizado a: "${text}"`);
+        res.json({ success: true, message: 'Ubicación actualizada correctamente' });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error guardando configuración GPS' });
+    }
 });
 
 module.exports = router;
