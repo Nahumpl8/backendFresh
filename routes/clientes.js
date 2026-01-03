@@ -171,49 +171,79 @@ router.put('/canjear/:telefono', async (req, res) => {
 });
 
 // ====================================================================
-// 🚀 OBTENER CLIENTES (OPTIMIZADO Y CORREGIDO)
-// Esta es la ÚNICA ruta GET / que debe existir.
+// 🚀 OBTENER CLIENTES (VERSIÓN HÍBRIDA / AUTO-REPARABLE)
 // ====================================================================
 router.get('/', async (req, res) => {
     try {
         const { page, limit } = req.query;
-
-        // IMPORTANTE: Incluimos 'walletPlatform' para que el dashboard sepa si es Apple o Google
+        const WalletDevice = require('../models/WalletDevice'); // Importamos modelo
+        
+        // 1. CONFIGURAR LA CONSULTA DE CLIENTES
         const campos = 'nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet walletPlatform misDirecciones ultimaSemanaRegistrada premiosPendientes createdAt';
+        let query = Clientes.find().select(campos).sort({ createdAt: -1 });
 
-        // MODO 1: PAGINACIÓN (Para la tabla de Clientes)
+        // Paginación o Límite
         if (page && limit) {
-            const pageNum = parseInt(page);
-            const limitNum = parseInt(limit);
-            const skip = (pageNum - 1) * limitNum;
+             const skip = (parseInt(page) - 1) * parseInt(limit);
+             query.skip(skip).limit(parseInt(limit));
+        } else if (limit) {
+            query.limit(parseInt(limit));
+        }
 
-            const clientes = await Clientes.find()
-                .select(campos)
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(limitNum)
-                .lean();
+        // 2. OBTENER CLIENTES (RÁPIDO)
+        const clientes = await query.lean();
 
-            const total = await Clientes.countDocuments();
-            // console.log('Clientes encontrados con walletPlatform:', clientes.filter(c => c.walletPlatform).length);
+        // 3. EL TRUCO MAESTRO: TRAER LOS WALLETS ACTIVOS 🎩
+        // Traemos solo los serialNumbers de WalletDevice (es una consulta ultra ligera)
+        // Esto nos dice: "¿Quiénes tienen Apple Wallet realmente?"
+        const walletDevices = await WalletDevice.find({}, 'serialNumber').lean();
+        
+        // Creamos un "Set" para búsqueda instantánea (O(1))
+        // Convertimos 'FRESH-663a...' a '663a...' para comparar fácil
+        const idsConApple = new Set(walletDevices.map(d => 
+            d.serialNumber.replace('FRESH-', '').replace('LEDUO-', '')
+        ));
 
-            return res.status(200).json({
-                data: clientes,
-                totalPages: Math.ceil(total / limitNum),
-                currentPage: pageNum,
+        // 4. FUSIÓN DE DATOS (EN MEMORIA)
+        // Recorremos los clientes y si encontramos uno que está en la lista de Apple,
+        // le forzamos los datos correctos, aunque la DB de Clientes diga lo contrario.
+        const clientesCorregidos = clientes.map(cliente => {
+            const idString = cliente._id.toString();
+            
+            // ¿Está en la lista real de dispositivos Apple?
+            const tieneAppleReal = idsConApple.has(idString);
+            
+            if (tieneAppleReal) {
+                // CASO: Tiene Apple pero la DB no lo sabía o decía Google
+                if (!cliente.hasWallet) {
+                    return { ...cliente, hasWallet: true, walletPlatform: 'apple' };
+                }
+                // CASO: Tiene Apple pero está marcado como solo Google (Dual user)
+                if (cliente.walletPlatform === 'google') {
+                    return { ...cliente, hasWallet: true, walletPlatform: 'both' };
+                }
+                // Si ya dice apple, lo dejamos así
+                if (!cliente.walletPlatform) {
+                     return { ...cliente, hasWallet: true, walletPlatform: 'apple' };
+                }
+            }
+            
+            // Si no hay cambios, devolvemos el cliente original
+            return cliente;
+        });
+
+        // 5. RESPONDER
+        if (page && limit) {
+             const total = await Clientes.countDocuments();
+             return res.status(200).json({
+                data: clientesCorregidos, // Enviamos la lista corregida
+                totalPages: Math.ceil(total / parseInt(limit)),
+                currentPage: parseInt(page),
                 totalItems: total
             });
         }
 
-        // MODO 2: SIN PAGINACIÓN (Para el Dashboard de Marketing - Rápido ⚡️)
-        let query = Clientes.find().select(campos).sort({ createdAt: -1 });
-
-        if (limit) {
-            query.limit(parseInt(limit));
-        }
-
-        const clientes = await query.lean();
-        res.status(200).json(clientes);
+        res.status(200).json(clientesCorregidos);
 
     } catch (err) {
         console.error("Error cargando clientes:", err);
@@ -221,82 +251,68 @@ router.get('/', async (req, res) => {
     }
 });
 
+// ---------------------------------------------------------
+// 🕵️‍♂️ DIAGNÓSTICO DE UN CLIENTE (Para ver por qué falla)
+// GET /api/clientes/diagnostico?nombre=Porfirio
+// ---------------------------------------------------------
+router.get('/diagnostico', async (req, res) => {
+    try {
+        const { nombre } = req.query;
+        // Busca un cliente que coincida con el nombre
+        const cliente = await Clientes.findOne({ nombre: { $regex: nombre, $options: 'i' } });
+        
+        if (!cliente) return res.json({ error: "No encontrado" });
 
+        res.json({
+            id: cliente._id,
+            nombre: cliente.nombre,
+            hasWallet: cliente.hasWallet,       // ¿Qué dice la DB?
+            walletPlatform: cliente.walletPlatform, // ¿Qué plataforma tiene?
+            sellos: cliente.sellos
+        });
+    } catch (err) {
+        res.json(err);
+    }
+});
 
-// ====================================================================
-// 🔄 SINCRONIZAR CLIENTES CON WALLET DEVICES
-// Visitar para arreglar datos: /api/clientes/sync-wallets
-// ====================================================================
-// ====================================================================
-// 🔄 SINCRONIZAR WALLETS (VERSIÓN FINAL: APPLE + GOOGLE)
-// Visitar: /api/clientes/sync-wallets
-// ====================================================================
+// ---------------------------------------------------------
+// 🔄 SINCRONIZAR WALLETS (CORREGIDO "BOTH")
+// ---------------------------------------------------------
 router.get('/sync-wallets', async (req, res) => {
     try {
         const WalletDevice = require('../models/WalletDevice');
-        const GoogleWalletObject = require('../models/GoogleWalletObject'); // <--- IMPORTANTE
+        const GoogleWalletObject = require('../models/GoogleWalletObject');
 
-        console.log("🔄 Iniciando sincronización TOTAL...");
-
+        console.log("🔄 Sincronizando Wallets...");
         let log = [];
-        let countApple = 0;
-        let countGoogle = 0;
 
-        // 1. SINCRONIZAR APPLE (Desde WalletDevice)
+        // 1. APPLE
         const appleDevices = await WalletDevice.find({});
         for (const device of appleDevices) {
             const cleanId = device.serialNumber.replace('FRESH-', '').replace('LEDUO-', '');
-
-            const cliente = await Clientes.findByIdAndUpdate(cleanId, {
-                hasWallet: true,
-                walletPlatform: 'apple'
-            }, { new: true });
-
-            if (cliente) {
-                // Evitamos duplicados en el log si tiene varios dispositivos
-                if (!log.includes(`${cliente.nombre} (Apple)`)) {
-                    log.push(`${cliente.nombre} (Apple)`);
-                    countApple++;
-                }
-            }
+            await Clientes.findByIdAndUpdate(cleanId, { hasWallet: true, walletPlatform: 'apple' });
+            log.push(`🍏 Apple set: ${cleanId}`);
         }
 
-        // 2. SINCRONIZAR GOOGLE (Desde GoogleWalletObject)
+        // 2. GOOGLE (Con lógica 'both')
         const googleObjects = await GoogleWalletObject.find({});
         for (const obj of googleObjects) {
-            // En GoogleWalletObject guardamos el clienteId directo
             const cleanId = obj.clienteId;
-
             if (cleanId) {
-                const cliente = await Clientes.findByIdAndUpdate(cleanId, {
-                    hasWallet: true,
-                    walletPlatform: 'google'
-                }, { new: true });
-
-                if (cliente) {
-                    if (!log.includes(`${cliente.nombre} (Google)`)) {
-                        log.push(`${cliente.nombre} (Google)`);
-                        countGoogle++;
-                    }
+                const cliente = await Clientes.findById(cleanId);
+                let platform = 'google';
+                if (cliente && cliente.walletPlatform === 'apple') {
+                    platform = 'both'; // Si ya tenía Apple, ahora tiene AMBOS
                 }
+                
+                await Clientes.findByIdAndUpdate(cleanId, { hasWallet: true, walletPlatform: platform });
+                log.push(`🤖 Google set (${platform}): ${cleanId}`);
             }
         }
 
-        console.log("📊 Resumen Sincronización:", log);
-
-        res.json({
-            success: true,
-            summary: {
-                apple: countApple,
-                google: countGoogle,
-                total: countApple + countGoogle
-            },
-            details: log
-        });
-
+        res.json({ message: "Sincronización terminada", log });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json(err);
     }
 });
 
