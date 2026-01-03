@@ -86,9 +86,8 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
             console.error("⚠️ Error menor leyendo campaña:", e.message);
         }
 
-        // --- CACHE CONTROL INTELIGENTE ---
+        // --- CACHE CONTROL ---
         const clientDate = new Date(cliente.updatedAt);
-        // La fecha del pase es la MAYOR entre la actualización del cliente y la campaña
         const lastModified = clientDate > campaignDate ? clientDate : campaignDate;
         const lastModifiedTime = Math.floor(lastModified.getTime() / 1000);
 
@@ -161,13 +160,13 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                 ],
                 primaryFields: [],
                 secondaryFields: [
-                    // 👇 AQUÍ ESTABAN FALTANDO LOS SELLOS
+                    // ✅ AQUI ESTABA EL ERROR: Faltaba este bloque
                     {
                         key: "balance_sellos",
                         label: "MIS SELLOS",
                         value: `${numSellos} de 8`,
                         textAlignment: "PKTextAlignmentLeft",
-                        changeMessage: "Felicidades! Ahora tienes %@ sellos 🥕" 
+                        changeMessage: "¡Actualización! Ahora tienes %@ sellos 🥕"
                     },
                     { 
                         key: 'nombre', 
@@ -180,17 +179,25 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                     { key: "status", label: "ESTATUS", value: statusText, textAlignment: "PKTextAlignmentCenter" }
                 ],
                 backFields: [
+                    // ✅ Mantenemos la promo atrás como en Le Duo
                     {
                         key: "marketing_promo",
                         label: promoTitle,
                         value: promoMessage,
                         textAlignment: "PKTextAlignmentLeft",
-                        changeMessage: "%@"
+                        // Al arreglar la estructura general, este changeMessage volverá a funcionar
+                        changeMessage: "%@" 
                     },
                     {
                         key: "quick_links",
                         label: "📱 CONTACTO RÁPIDO",
                         value: "💬 WhatsApp Pedidos:\nhttps://wa.me/527712346620\n\n📸 Instagram:\nhttps://instagram.com/freshmarketp\n\n📘 Facebook:\nhttps://facebook.com/freshmarketp",
+                        textAlignment: "PKTextAlignmentLeft"
+                    },
+                    {
+                        key: "how_it_works",
+                        label: "🙌 TU TARJETA FRESH",
+                        value: "🥕 Recibe 1 sello por compras mayores a $300.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico.",
                         textAlignment: "PKTextAlignmentLeft"
                     },
                     {
