@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-const mongoose = require('mongoose'); // Necesario para validar IDs
+const mongoose = require('mongoose'); 
 
 // ==========================================
 // 🔐 CARGA DE CREDENCIALES
@@ -48,7 +48,6 @@ function formatSmartName(fullName) {
 // 🛡️ FUNCIÓN DE LIMPIEZA DE ID
 function cleanObjectId(id) {
     if (!id) return "";
-    // Elimina puntos, espacios y caracteres raros al final
     return id.trim().replace(/[^a-fA-F0-9]/g, "");
 }
 
@@ -59,10 +58,8 @@ router.get('/apple/:clientId', async (req, res) => {
     try {
         let { clientId } = req.params;
         
-        // 1. Limpiamos el ID (Quitamos los '..' si existen)
         clientId = cleanObjectId(clientId);
 
-        // 2. Validamos que sea un ID real de Mongo antes de buscar
         if (!mongoose.Types.ObjectId.isValid(clientId)) {
             return res.status(400).json({ error: "ID de cliente inválido o malformado." });
         }
@@ -70,17 +67,14 @@ router.get('/apple/:clientId', async (req, res) => {
         const cliente = await Clientes.findById(clientId);
         if (!cliente) return res.status(404).json({ error: "Cliente no encontrado" });
 
-        // Directorios
         const baseDir = path.resolve(__dirname, '../assets/freshmarket');
         const certsDir = path.resolve(__dirname, '../certs');
         const nivelesDir = path.join(baseDir, 'niveles');
 
-        // Certificados
         const wwdr = fs.readFileSync(path.join(certsDir, 'wwdr.pem'));
         const signerCert = fs.readFileSync(path.join(certsDir, 'signerCert.pem'));
         const signerKey = fs.readFileSync(path.join(certsDir, 'signerKey.pem'));
 
-        // Lógica Sellos
         let numSellos = cliente.sellos || 0;
         if (numSellos > 8) numSellos = 8;
         let numPuntos = cliente.puntos || 0;
@@ -90,16 +84,14 @@ router.get('/apple/:clientId', async (req, res) => {
         else if (numSellos === 0) statusText = '🌟 Bienvenido';
         else if (numSellos > 5 && numSellos < 8) statusText = '🔥 ¡YA CASI LLEGAS!';
 
-        // 🎨 LOGICA DE COLOR APPLE
-        let appleBackgroundColor = "rgb(34, 139, 34)"; // Verde
+        let appleBackgroundColor = "rgb(34, 139, 34)";
         let appleLabelColor = "rgb(200, 255, 200)";
 
         if (numSellos > 5) {
-            appleBackgroundColor = "rgb(249, 115, 22)"; // Naranja
+            appleBackgroundColor = "rgb(249, 115, 22)";
             appleLabelColor = "rgb(255, 230, 200)";
         }
 
-        // Imagen dinámica
         const stripFilename = `${numSellos}-sello.png`;
         const stripPath = path.join(nivelesDir, stripFilename);
         const finalStripPath = fs.existsSync(stripPath) ? stripPath : path.join(nivelesDir, '0-sello.png');
@@ -140,8 +132,7 @@ router.get('/apple/:clientId', async (req, res) => {
                         textAlignment: "PKTextAlignmentRight"
                     }
                 ],
-                primaryFields: [
-                ],
+                primaryFields: [],
                 secondaryFields: [
                     {
                         key: "balance_sellos",
@@ -169,13 +160,13 @@ router.get('/apple/:clientId', async (req, res) => {
                     {
                         key: "quick_links",
                         label: "📱 CONTACTO RÁPIDO",
-                        value: "💬 WhatsApp Pedidos:\nhttps://wa.me/527712346620\n\n📸 Instagram:\nhttps://instagram.com/freshmarketp\n\n📘 Facebook:\nhttps://facebook.com/freshmarketp",
+                        value: "💬 WhatsApp Pedidos:\nhttps://wa.me/527712346620\n📸 Instagram:\nhttps://instagram.com/freshmarketp\n📘 Facebook:\nhttps://facebook.com/freshmarketp",
                         textAlignment: "PKTextAlignmentLeft"
                     },
                     {
                         key: "how_it_works",
                         label: "🙌 TU TARJETA FRESH",
-                        value: "🥕 Recibe 1 sello por compras mayores a $300.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico (no son canjeables por dinero en efectivo).",
+                        value: "🥕 Recibe 1 sello por compras mayores a $285.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico (no son canjeables por dinero en efectivo).",
                         textAlignment: "PKTextAlignmentLeft"
                     },
                     {
@@ -210,7 +201,7 @@ router.get('/apple/:clientId', async (req, res) => {
                     format: "PKBarcodeFormatQR",
                     message: cliente._id.toString(),
                     messageEncoding: "iso-8859-1",
-                    altText: 'fidelity.mx'
+                    altText: 'fidelify.mx'
                 }
             ]
         };
@@ -237,8 +228,6 @@ router.get('/google/:clientId', async (req, res) => {
         if (!SERVICE_ACCOUNT) return res.status(500).send("No credentials");
 
         let { clientId } = req.params;
-        
-        // 1. Limpiamos ID
         clientId = cleanObjectId(clientId);
         
         if (!mongoose.Types.ObjectId.isValid(clientId)) {
@@ -259,12 +248,9 @@ router.get('/google/:clientId', async (req, res) => {
             selectedClassId = CLASS_LEGEND;
         }
 
-        // ObjectId persistente basado en clienteId
         const objectId = `${GOOGLE_ISSUER_ID}.${cliente._id}`;
-
         const nombreLimpio = cliente.nombre ? cliente.nombre.split('-')[0].trim() : "Cliente Fresh";
 
-        // Verificar si el objeto ya existe
         let walletObject = await GoogleWalletObject.findOne({ objectId });
         let version = 1;
 
@@ -331,7 +317,6 @@ router.get('/google/:clientId', async (req, res) => {
         const token = jwt.sign(payload, SERVICE_ACCOUNT.private_key, { algorithm: 'RS256' });
         const saveUrl = `https://pay.google.com/gp/v/save/${token}`;
 
-        // 👇 ¡AQUÍ ACTUALIZAMOS AL CLIENTE! 👇
         await Clientes.findByIdAndUpdate(clientId, {
             hasWallet: true,
             walletPlatform: 'google'
@@ -356,7 +341,7 @@ router.put('/google-update/:clientId', async (req, res) => {
         }
 
         const { clientId } = req.params;
-        const cleanId = cleanObjectId(clientId); // Limpieza
+        const cleanId = cleanObjectId(clientId);
 
         const cliente = await Clientes.findById(cleanId);
         
@@ -367,17 +352,11 @@ router.put('/google-update/:clientId', async (req, res) => {
         const { updateGoogleWalletObject } = require('../utils/pushGoogle');
         await updateGoogleWalletObject(cleanId);
 
-        res.status(200).json({
-            success: true,
-            message: 'Google Wallet actualizado exitosamente'
-        });
+        res.status(200).json({ success: true, message: 'Google Wallet actualizado' });
 
     } catch (err) {
         console.error("❌ GOOGLE UPDATE ERROR:", err);
-        res.status(500).json({
-            success: false,
-            error: err.message || 'Error al actualizar Google Wallet'
-        });
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
@@ -387,22 +366,16 @@ router.put('/google-update/:clientId', async (req, res) => {
 router.post('/notify/:clientId', async (req, res) => {
     try {
         const { clientId } = req.params;
-        const cleanId = cleanObjectId(clientId); // Limpieza
+        const cleanId = cleanObjectId(clientId);
         
         const cliente = await Clientes.findById(cleanId);
-        if (!cliente) {
-            return res.status(404).json({ success: false, error: 'Cliente no encontrado' });
-        }
+        if (!cliente) return res.status(404).json({ success: false, error: 'No encontrado' });
         
         await notifyPassUpdate(cleanId);
-        
-        res.status(200).json({
-            success: true,
-            message: 'Notificación enviada exitosamente'
-        });
+        res.status(200).json({ success: true, message: 'Notificación enviada' });
         
     } catch (err) {
-        console.error("❌ ERROR NOTIFICACIÓN INDIVIDUAL:", err);
+        console.error("❌ ERROR NOTIFY:", err);
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -413,44 +386,48 @@ router.post('/notify/:clientId', async (req, res) => {
 router.post('/notify-bulk', async (req, res) => {
     try {
         const { clientIds } = req.body;
-        
-        if (!Array.isArray(clientIds) || clientIds.length === 0) {
-            return res.status(400).json({ success: false, error: 'Se requiere un array de clientIds' });
-        }
+        if (!Array.isArray(clientIds) || clientIds.length === 0) return res.status(400).json({ error: 'Array requerido' });
         
         const success = [];
         const failed = [];
         
         for (const rawId of clientIds) {
-            const clientId = cleanObjectId(rawId); // Limpieza
+            const clientId = cleanObjectId(rawId);
             try {
                 if (!mongoose.Types.ObjectId.isValid(clientId)) continue;
-
-                const cliente = await Clientes.findById(clientId);
-                if (!cliente) {
-                    failed.push({ clientId, error: 'No encontrado' });
-                    continue;
-                }
-                
                 await notifyPassUpdate(clientId);
-                success.push({ clientId, nombre: cliente.nombre });
-                
+                success.push(clientId);
             } catch (err) {
-                console.error(`❌ Error notificando cliente ${clientId}:`, err);
                 failed.push({ clientId, error: err.message });
             }
         }
-        
-        res.status(200).json({
-            success: true,
-            summary: { total: clientIds.length, success: success.length, failed: failed.length },
-            success,
-            failed
-        });
-        
+        res.status(200).json({ success: true, summary: { total: clientIds.length, success: success.length, failed: failed.length } });
     } catch (err) {
-        console.error("❌ ERROR NOTIFICACIÓN MASIVA:", err);
         res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ==========================================
+// 🔗 LINK INTELIGENTE (CORTA Y REDIRIGE)
+// GET /api/wallet/go/:clientId
+// ==========================================
+router.get('/go/:clientId', async (req, res) => {
+    try {
+        const { clientId } = req.params;
+        const cleanId = cleanObjectId(clientId); // Limpieza de seguridad
+        
+        // Detectar si es iPhone/iPad
+        const userAgent = req.headers['user-agent'] || '';
+        const isIOS = /iPad|iPhone|iPod/.test(userAgent) && !window.MSStream;
+
+        if (isIOS) {
+            res.redirect(`${BASE_URL}/api/wallet/apple/${cleanId}`);
+        } else {
+            res.redirect(`${BASE_URL}/api/wallet/google/${cleanId}`);
+        }
+    } catch (err) {
+        console.error("Error en smart link:", err);
+        res.status(500).send("Error redirigiendo");
     }
 });
 
