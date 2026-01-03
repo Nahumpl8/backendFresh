@@ -181,33 +181,48 @@ router.put('/canjear/:telefono', async (req, res) => {
     }
 });
 
-// Obtener todos los clientes
-// GET ALL CLIENTS¿
+// OBTENER CLIENTES PAGINADOS (Rápido ⚡️)
 router.get('/', async (req, res) => {
     try {
-        // 1. Buscamos todos los clientes, pero SOLO los campos ligeros.
-        // Esto reduce la carga de 5MB a ~200KB.
+        // Leemos parámetros de paginación (por defecto página 1, 20 items)
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const skip = (page - 1) * limit;
+
+        // 1. Traer solo el segmento necesario, ordenados por fecha (nuevo -> viejo)
         const clientes = await Clientes.find()
-            .select('nombre direccion telefono telefonoSecundario gpsLink puntos sellos misDirecciones ultimaSemanaRegistrada premiosPendientes')
-            .sort({ nombre: 1 });
+            .select('nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet ruletaTokens createdAt') // Campos necesarios
+            .sort({ createdAt: -1 }) // ⚠️ Ordenar del más nuevo al más viejo
+            .skip(skip)
+            .limit(limit)
+            .lean(); // Objetos ligeros
 
-        // 2. Verificamos quién tiene Wallet instalada (Igual que antes)
+        // 2. Contar total para saber cuántas páginas hay
+        const total = await Clientes.countDocuments();
+
+        // 3. Enriquecer con hasWallet (Solo para estos 20)
+        // Nota: Si ya guardas hasWallet en el modelo Clientes (como hicimos antes), este paso es opcional.
+        // Si no confías en tu dato guardado, déjalo. Si confías, bórralo para más velocidad.
+        const WalletDevice = require('../models/WalletDevice');
         const clientesConWallet = await Promise.all(clientes.map(async (c) => {
+            // Si ya tiene el flag en DB úsalo, sino verifica en tiempo real (más lento)
+            if (c.hasWallet) return c; 
+            
             const serialNumber = `FRESH-${c._id}`;
-            const deviceCount = await WalletDevice.countDocuments({ serialNumber: serialNumber });
-
-            return {
-                ...c.toObject(),
-                hasWallet: deviceCount > 0
-            };
+            const deviceCount = await WalletDevice.countDocuments({ serialNumber });
+            return { ...c, hasWallet: deviceCount > 0 };
         }));
 
-        // 3. Respondemos
-        res.status(200).json(clientesConWallet);
+        res.status(200).json({
+            data: clientesConWallet,
+            currentPage: page,
+            totalPages: Math.ceil(total / limit),
+            totalItems: total
+        });
 
     } catch (err) {
-        console.error(err);
-        res.status(500).json(err);
+        console.error("Error cargando clientes:", err);
+        res.status(500).json({ error: 'Error al obtener clientes.' });
     }
 });
 
