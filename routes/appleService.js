@@ -35,7 +35,6 @@ router.post('/v1/devices/:deviceId/registrations/:passTypeId/:serialNumber', asy
             { upsert: true, new: true }
         );
 
-        // Marcar que el cliente tiene wallet
         const clientId = serialNumber.replace('FRESH-', '');
         await Clientes.findByIdAndUpdate(clientId, { hasWallet: true, walletPlatform: 'apple' });
 
@@ -60,7 +59,7 @@ router.get('/v1/devices/:deviceId/registrations/:passTypeId', async (req, res) =
     }
 });
 
-// 3. ENTREGA (VERSIÓN BLINDADA 🛡️)
+// 3. ENTREGA DEL PASE
 router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
     try {
         const { serialNumber } = req.params;
@@ -71,7 +70,7 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
         const cliente = await Clientes.findById(clientId);
         if (!cliente) return res.sendStatus(404);
 
-        // --- 1. DATOS CAMPAÑA (Con protección try/catch) ---
+        // --- DATOS CAMPAÑA ---
         let promoTitle = "📢 NOVEDADES";
         let promoMessage = "🥕 ¡Bienvenido a Fresh Market!";
         let campaignDate = new Date(0);
@@ -84,16 +83,16 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                 campaignDate = new Date(lastCampaign.sentAt);
             }
         } catch (e) {
-            console.error("⚠️ Error menor leyendo campaña (se usará default):", e.message);
+            console.error("⚠️ Error menor leyendo campaña:", e.message);
         }
 
-        // --- 2. CACHE CONTROL ---
+        // --- CACHE CONTROL INTELIGENTE ---
         const clientDate = new Date(cliente.updatedAt);
-        // Usamos la fecha más reciente para forzar actualización si hubo campaña
+        // La fecha del pase es la MAYOR entre la actualización del cliente y la campaña
         const lastModified = clientDate > campaignDate ? clientDate : campaignDate;
         const lastModifiedTime = Math.floor(lastModified.getTime() / 1000);
 
-        // --- 3. DATOS DEL PASE ---
+        // --- GENERACIÓN ---
         const baseDir = path.resolve(__dirname, '../assets/freshmarket');
         const certsDir = path.resolve(__dirname, '../certs');
         const nivelesDir = path.join(baseDir, 'niveles');
@@ -102,7 +101,6 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
         const signerCert = fs.readFileSync(path.join(certsDir, 'signerCert.pem'));
         const signerKey = fs.readFileSync(path.join(certsDir, 'signerKey.pem'));
 
-        // Lógica visual
         let numSellos = cliente.sellos || 0;
         if (numSellos > 8) numSellos = 8;
         let numPuntos = cliente.puntos || 0;
@@ -158,15 +156,25 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                         label: "Puntos",
                         value: `${numPuntos} pts`,
                         textAlignment: "PKTextAlignmentRight",
-                        // Agregamos changeMessage aquí también para evitar el genérico
                         changeMessage: "Tus puntos cambiaron a %@"
                     }
                 ],
-                // MOVIMOS LOS SELLOS AQUI PARA PRIORIDAD
-                primaryFields: [
-                ],
+                primaryFields: [],
                 secondaryFields: [
-                    { key: 'nombre', label: 'CLIENTE', value: nombreLimpio, textAlignment: "PKTextAlignmentCenter" }
+                    // 👇 AQUÍ ESTABAN FALTANDO LOS SELLOS
+                    {
+                        key: "balance_sellos",
+                        label: "MIS SELLOS",
+                        value: `${numSellos} de 8`,
+                        textAlignment: "PKTextAlignmentLeft",
+                        changeMessage: "Felicidades! Ahora tienes %@ sellos 🥕" 
+                    },
+                    { 
+                        key: 'nombre', 
+                        label: 'CLIENTE', 
+                        value: nombreLimpio, 
+                        textAlignment: "PKTextAlignmentRight" 
+                    }
                 ],
                 auxiliaryFields: [
                     { key: "status", label: "ESTATUS", value: statusText, textAlignment: "PKTextAlignmentCenter" }
@@ -183,12 +191,6 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                         key: "quick_links",
                         label: "📱 CONTACTO RÁPIDO",
                         value: "💬 WhatsApp Pedidos:\nhttps://wa.me/527712346620\n\n📸 Instagram:\nhttps://instagram.com/freshmarketp\n\n📘 Facebook:\nhttps://facebook.com/freshmarketp",
-                        textAlignment: "PKTextAlignmentLeft"
-                    },
-                    {
-                        key: "how_it_works",
-                        label: "🙌 TU TARJETA FRESH",
-                        value: "🥕 Recibe 1 sello por compras mayores a $285.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico.",
                         textAlignment: "PKTextAlignmentLeft"
                     },
                     {
@@ -210,7 +212,7 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
                     format: "PKBarcodeFormatQR",
                     message: cliente._id.toString(),
                     messageEncoding: "iso-8859-1",
-                    altText: 'fidelity.mx'
+                    altText: nombreLimpio
                 }
             ]
         };
@@ -226,7 +228,6 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
         res.send(buffer);
     } catch (err) {
         console.error("❌ Error CRÍTICO generando pase:", err);
-        // Mandamos 500 para que el front sepa que falló
         res.status(500).send("Error generando pase");
     }
 });
