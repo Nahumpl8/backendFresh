@@ -26,6 +26,10 @@ const ClientesSchema = new mongoose.Schema({
         direccion: String,
         gpsLink: String
     }],
+    vendedor: { 
+        type: String, 
+        default: 'Fresh Market' // Por defecto es la tienda
+    },
     telefonoSecundario: { type: String, default: null },
     gpsLink: { type: String },
     pedidos: { type: Array },

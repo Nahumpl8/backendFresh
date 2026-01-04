@@ -17,6 +17,7 @@ const walletRoute = require('./routes/wallet');
 const appleServiceRoute = require('./routes/appleService');
 const clientesAuthRoute = require('./routes/clientesAuth');
 const marketingRoute = require('./routes/marketing');
+const vendedoresRoute = require('./routes/vendedores');
 
 
 
@@ -53,6 +54,7 @@ app.use('/api/wallet', walletRoute);
 app.use('/api/wallet', appleServiceRoute);
 app.use('/api/clientes-auth', clientesAuthRoute);
 app.use('/api/marketing', marketingRoute);
+app.use('/api/vendedores', vendedoresRoute);
 
 
 

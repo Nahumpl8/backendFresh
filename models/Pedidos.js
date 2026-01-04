@@ -15,6 +15,9 @@ const PedidoSchema = new mongoose.Schema({
     envio: { type: Number, required: false },
     regalo: { type: String, required: false },
     editarPdf: { type: Boolean, required: false },
+    vendedor: { type: String, required: false }, // ¿Quién cerró esta venta?
+    comision: { type: Number, default: 0 },      // ¿Cuánto ganó? ($20 o $10)
+    esClienteNuevo: { type: Boolean, default: false },
     puntosUsados: {
         type: Number,
         default: 0

@@ -24,38 +24,114 @@ function esSemanaAnterior(anterior, actual) {
 }
 
 // ==========================================
+// 📊 REPORTE DE PROMOTORES (NUEVO)
+// GET /api/pedidos/stats/promotores?mes=1&anio=2026
+// ==========================================
+router.get('/stats/promotores', async (req, res) => {
+    try {
+        const { mes, anio } = req.query;
+        
+        // Si no mandan fecha, usamos el mes actual
+        const now = new Date();
+        const year = anio || now.getFullYear();
+        const month = mes || (now.getMonth() + 1);
+
+        const fechaInicio = new Date(year, month - 1, 1);
+        const fechaFin = new Date(year, month, 0, 23, 59, 59);
+
+        const reporte = await Pedido.aggregate([
+            {
+                $match: {
+                    createdAt: { $gte: fechaInicio, $lte: fechaFin },
+                    vendedor: { $ne: 'Fresh Market' }, // Ignorar ventas directas
+                    vendedor: { $exists: true, $ne: null }
+                }
+            },
+            {
+                $group: {
+                    _id: "$vendedor",
+                    ventasTotales: { $sum: 1 },
+                    dineroGenerado: { $sum: "$total" },
+                    comisionesA_Pagar: { $sum: "$comision" }, // Suma automática de $20 y $10
+                    clientesNuevos: { 
+                        $sum: { $cond: ["$esClienteNuevo", 1, 0] } 
+                    }
+                }
+            }
+        ]);
+
+        res.json(reporte);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json(err);
+    }
+});
+
+// ==========================================
 // CREAR NUEVO PEDIDO (POST /new)
 // ==========================================
 router.post('/new', async (req, res) => {
-    console.log("📝 Recibiendo nuevo pedido..."); // Log para depurar
+    console.log("📝 Recibiendo nuevo pedido..."); 
     
     try {
-        // 1. Guardar el pedido primero
-        const newPedido = new Pedido(req.body);
+        const { telefono, puntosUsados, total } = req.body;
+
+        // 1. Buscar al cliente ANTES de guardar (Para lógica de promotores)
+        const cliente = await Clientes.findOne({ telefono: telefono });
+        
+        // --- LÓGICA DE PROMOTORES ---
+        let vendedor = 'Fresh Market';
+        let comision = 0;
+        let esClienteNuevo = false;
+
+        if (cliente && cliente.vendedor) {
+            vendedor = cliente.vendedor; // "Laura Lopez", etc.
+        }
+
+        // Si hay un promotor asignado (que no sea la tienda)
+        if (vendedor !== 'Fresh Market') {
+            // Contamos cuántos pedidos previos tiene este cliente
+            const pedidosAnteriores = await Pedido.countDocuments({ telefono: telefono });
+
+            if (pedidosAnteriores === 0) {
+                // PRIMER PEDIDO -> $20
+                comision = 20;
+                esClienteNuevo = true;
+            } else {
+                // RECURRENTE -> $10
+                comision = 10;
+                esClienteNuevo = false;
+            }
+            console.log(`💰 Comisión para ${vendedor}: $${comision} (Cliente Nuevo: ${esClienteNuevo})`);
+        }
+
+        // 2. Guardar el pedido con los datos de comisión
+        const newPedido = new Pedido({
+            ...req.body,
+            vendedor,
+            comision,
+            esClienteNuevo
+        });
         const savedPedido = await newPedido.save();
         console.log("✅ Pedido guardado ID:", savedPedido._id);
 
-        // 2. Buscar al cliente
-        const cliente = await Clientes.findOne({ telefono: req.body.telefono });
-        
         let responsePayload = {
             pedido: savedPedido,
             walletLinks: null
         };
 
-        // 3. Actualizar Cliente (si existe)
+        // 3. Actualizar Cliente (Puntos, Sellos, Racha)
         if (cliente) {
             console.log("👤 Actualizando cliente:", cliente.nombre);
             
-            const puntosUsados = req.body.puntosUsados || 0;
-            const totalGastado = (cliente.totalGastado || 0) + req.body.total;
+            const totalGastado = (cliente.totalGastado || 0) + total;
             const totalPedidos = (cliente.totalPedidos || 0) + 1;
 
-            const efectivoGastado = req.body.total - puntosUsados;
+            const efectivoGastado = total - (puntosUsados || 0);
             const nuevosPuntos = Math.round(efectivoGastado * 0.015);
-            const puntos = (cliente.puntos || 0) - puntosUsados + nuevosPuntos;
+            const puntos = (cliente.puntos || 0) - (puntosUsados || 0) + nuevosPuntos;
 
-            // --- Lógica de Semanas ---
+            // --- Lógica de Semanas (Racha) ---
             const now = new Date();
             const semanaActual = `${now.getFullYear()}-${getWeekNumber(now)}`;
             let semanasSeguidas = cliente.semanasSeguidas || 0;
@@ -70,10 +146,10 @@ router.post('/new', async (req, res) => {
 
             const regaloDisponible = semanasSeguidas >= 4;
 
-            // --- LÓGICA DE SELLOS ---
+            // --- LÓGICA DE SELLOS (Ciclo 1-8) ---
             let sellosActuales = cliente.sellos || 0;
             let nuevosSellos = sellosActuales + 1;
-            if (nuevosSellos > 8) nuevosSellos = 1; 
+            if (nuevosSellos > 8) nuevosSellos = 1; // Reinicia ciclo, pero sigue teniendo sello 1
 
             await cliente.updateOne({
                 $set: {
@@ -87,7 +163,8 @@ router.post('/new', async (req, res) => {
                 }
             });
 
-            // 🔔 NOTIFICACIÓN (No bloqueante)
+            // 🔔 NOTIFICACIÓN WALLET
+            // Usamos notifyPassUpdate que ya maneja Apple y Google automáticamente
             notifyPassUpdate(cliente._id).catch(err => console.error("❌ Error push wallet:", err));
 
             responsePayload.walletLinks = {
@@ -140,6 +217,7 @@ router.delete('/:id', async (req, res) => {
                     totalPedidos: (cliente.totalPedidos || 0) - 1
                 }
             });
+            // Notificamos la reversión de puntos
             notifyPassUpdate(cliente._id).catch(err => console.error("❌ Error push wallet delete:", err));
         }
 
@@ -171,17 +249,15 @@ router.get('/cliente/:telefono', async (req, res) => {
 });
 
 // ==========================================
-// ⚡️ OBTENER TODOS LOS PEDIDOS (OPTIMIZADO)
+// ⚡️ OBTENER TODOS LOS PEDIDOS
 // ==========================================
-// ANTES: Traía TODO el historial (Lento 🐢)
-// AHORA: Trae solo los últimos 100 (Rápido 🐇)
 router.get('/', async (req, res) => {
     try {
         const limit = req.query.limit ? parseInt(req.query.limit) : 100;
         
         const pedidos = await Pedido.find()
-            .sort({ createdAt: -1 }) // Los más nuevos primero
-            .limit(limit);           // Límite de seguridad
+            .sort({ createdAt: -1 }) 
+            .limit(limit);           
             
         res.status(200).json(pedidos);
     } catch (err) {
@@ -200,16 +276,14 @@ router.get('/semana', async (req, res) => {
 
     const pedidosThisWeek = await Pedido.find({
         createdAt: { $gte: monday, $lte: sunday }
-    }).sort({ createdAt: -1 }); // Orden inverso para ver lo último arriba
+    }).sort({ createdAt: -1 });
 
     res.json(pedidosThisWeek);
 });
 
 // Pedidos de la semana pasada
 router.get('/semanaPasada', async (req, res) => {
-    // ... (Tu lógica de fechas estaba bien, solo asegúrate de ordenarlos)
     const today = new Date();
-    // Ajuste simple para obtener lunes pasado
     const mondayThisWeek = new Date(today.setDate(today.getDate() - today.getDay() + 1));
     const lastSunday = new Date(mondayThisWeek);
     lastSunday.setDate(lastSunday.getDate() - 1);
@@ -227,10 +301,7 @@ router.get('/semanaPasada', async (req, res) => {
 });
 
 
-// ... (tus otras rutas)
-
-// 🔍 BUSCAR PEDIDOS POR FECHA EXACTA (OPTIMIZADO)
-// GET /api/pedidos/buscar-fecha?fecha=lunes, 22 Diciembre 2025
+// 🔍 BUSCAR PEDIDOS POR FECHA EXACTA
 router.get('/buscar-fecha', async (req, res) => {
     try {
         const fechaBusqueda = req.query.fecha;
@@ -239,11 +310,9 @@ router.get('/buscar-fecha', async (req, res) => {
             return res.status(400).json([]);
         }
 
-        // Buscamos coincidencia exacta o parcial en el string de fecha
-        // $options: 'i' hace que no importen mayúsculas/minúsculas
         const pedidos = await Pedido.find({ 
             fecha: { $regex: fechaBusqueda, $options: 'i' } 
-        }).sort({ cliente: 1 }); // Ordenamos alfabéticamente por cliente directo desde DB
+        }).sort({ cliente: 1 }); 
 
         res.json(pedidos);
 
