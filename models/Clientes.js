@@ -1,69 +1,80 @@
 const mongoose = require('mongoose');
 
-const ClientesSchema = new mongoose.Schema({
+// 1. Definimos el Schema como "ClienteSchema" (Singular)
+const ClienteSchema = new mongoose.Schema({
+    // --- DATOS PERSONALES ---
     nombre: { type: String, required: true },
     direccion: { type: String, required: true },
-    telefono: { type: String, required: true },
+    telefono: { type: String, required: true, unique: true },
+    telefonoSecundario: { type: String, default: null },
+    gpsLink: { type: String },
+    
+    // Auth (Opcionales)
     email: {
         type: String,
         default: null,
-        lowercase: true, // Normalizar a minúsculas
+        lowercase: true,
         trim: true,
-        validate: {
-            validator: function (v) {
-                // Si no hay email, está bien (es opcional)
-                if (!v) return true;
-                // Si hay email, validar formato
-                return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-            },
-            message: 'Email inválido'
-        }
+        sparse: true 
     },
-    pin: { type: String }, // Aquí guardaremos el hash, no el numero directo
-    sellos: { type: Number, default: 0 }, // Tu nueva variable para wallets
+    pin: { type: String }, 
+
+    // Direcciones Extra
     misDirecciones: [{
         alias: String,
         direccion: String,
         gpsLink: String
     }],
+
+    // --- 🟢 PROMOTORES ---
     vendedor: { 
         type: String, 
-        default: 'Fresh Market' // Por defecto es la tienda
+        default: 'Fresh Market' // Por defecto venta directa
     },
-    telefonoSecundario: { type: String, default: null },
-    gpsLink: { type: String },
-    pedidos: { type: Array },
-    totalPedidos: { type: Number },
-    totalGastado: { type: Number },
+
+    // --- ESTADÍSTICAS GENERALES ---
+    totalPedidos: { type: Number, default: 0 },
+    totalGastado: { type: Number, default: 0 },
+
+    // --- WALLET ---
     hasWallet: { type: Boolean, default: false },
     walletPlatform: { type: String, enum: ['none', 'apple', 'google', 'both'], default: 'none' },
+
+    // --- PUNTOS (Cashback) ---
     puntos: { type: Number, default: 0 },
+
+    // --- SISTEMA DE RACHA (Semanas seguidas) ---
     semanasSeguidas: { type: Number, default: 0 },
-    regaloDisponible: { type: Boolean, default: false },
-    ultimaSemanaRegistrada: { type: String },
-    ultimaFechaPuntos: {
-        type: Date,
-        default: Date.now
-    },
-    ruletaTokens: { type: Number, default: 0 },
+    ultimaSemanaRegistrada: { type: String }, // Ej: "2026-1"
+    regaloDisponible: { type: Boolean, default: false }, // Regalo por racha de 4 semanas
+
+    // --- 🟢 NUEVO: SISTEMA DE SELLOS INTELIGENTE ---
+    sellos: { type: Number, default: 0 },              // Tarjeta actual (1-8). Se reinicia.
+    sellosSemestrales: { type: Number, default: 0 },   // Acumulador histórico. NO se reinicia.
+    ultimaSemanaSello: { type: String, default: '' },  // Freno semanal (Ej: "2026-1")
+    tarjetasCompletadas: { type: Number, default: 0 }, // Histórico de tarjetas llenas
+    premioDisponible: { type: Boolean, default: false }, // ¿Tiene derecho a premio por 8 sellos?
+
+    // --- 🎡 RULETA (PREMIOS GANADOS) ---
     premiosPendientes: [{
-        source: { type: String, default: 'roulette' },
-        key: String, label: String, type: String, value: Number,
-        expiresAt: Date, redeemed: { type: Boolean, default: false },
-        spinId: { type: mongoose.Schema.Types.ObjectId, ref: 'RouletteSpin' }
+        label: String,        
+        type: String,         
+        value: Number,        
+        expiresAt: Date,      
+        redeemed: { type: Boolean, default: false }, 
+        redeemedAt: Date,
+        spinId: { type: String } 
     }],
+
 }, { timestamps: true });
 
-// Índice único para email (solo aplica cuando email existe)
-// sparse: true permite múltiples nulls
-ClientesSchema.index({ email: 1 }, { unique: true, sparse: true });
 // ---------------------------------------------------------
-// 🚀 ÍNDICES DE VELOCIDAD (AGREGA ESTO)
+// 🚀 ÍNDICES DE VELOCIDAD
 // ---------------------------------------------------------
-// Permite buscar rapidísimo por nombre y teléfono
-ClientesSchema.index({ nombre: 1 });
-ClientesSchema.index({ telefono: 1 });
-// Índice de texto para el buscador "inteligente" (opcional pero recomendado)
-ClientesSchema.index({ nombre: 'text', telefono: 'text' });
+// 2. Aquí usamos "ClienteSchema" (Singular) para coincidir con la definición de arriba
+ClienteSchema.index({ email: 1 }, { unique: true, sparse: true });
+ClienteSchema.index({ nombre: 1 });
+ClienteSchema.index({ telefono: 1 });
+ClienteSchema.index({ nombre: 'text', telefono: 'text' });
 
-module.exports = mongoose.model('Clientes', ClientesSchema);
+module.exports = mongoose.model('Clientes', ClienteSchema);
