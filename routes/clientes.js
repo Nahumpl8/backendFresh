@@ -173,77 +173,102 @@ router.put('/canjear/:telefono', async (req, res) => {
 // ====================================================================
 // 🚀 OBTENER CLIENTES (VERSIÓN HÍBRIDA / AUTO-REPARABLE)
 // ====================================================================
+// ====================================================================
+// 🚀 OBTENER CLIENTES (CON FILTROS AVANZADOS + WALLET FIX)
+// ====================================================================
 router.get('/', async (req, res) => {
     try {
-        const { page, limit } = req.query;
-        const WalletDevice = require('../models/WalletDevice'); // Importamos modelo
-        
-        // 1. CONFIGURAR LA CONSULTA DE CLIENTES
-        const campos = 'nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet walletPlatform misDirecciones ultimaSemanaRegistrada premiosPendientes createdAt';
-        let query = Clientes.find().select(campos).sort({ createdAt: -1 });
+        // 1. EXTRAER PARÁMETROS DE LA URL
+        const { page = 1, limit = 10, q, time, spending } = req.query;
+        const WalletDevice = require('../models/WalletDevice');
 
-        // Paginación o Límite
-        if (page && limit) {
-             const skip = (parseInt(page) - 1) * parseInt(limit);
-             query.skip(skip).limit(parseInt(limit));
-        } else if (limit) {
-            query.limit(parseInt(limit));
+        // 2. CONSTRUIR EL OBJETO DE BÚSQUEDA (QUERY)
+        let queryObj = {};
+
+        // --- A. Filtro de Búsqueda (Texto) ---
+        if (q && q.length > 0) {
+            const regex = new RegExp(q, 'i'); // Case insensitive
+            queryObj.$or = [
+                { nombre: regex },
+                { telefono: regex }
+            ];
         }
 
-        // 2. OBTENER CLIENTES (RÁPIDO)
-        const clientes = await query.lean();
+        // --- B. Filtro de Tiempo (updatedAt: Última actividad) ---
+        if (time && time !== 'all') {
+            const now = new Date();
+            let dateLimit = new Date();
 
-        // 3. EL TRUCO MAESTRO: TRAER LOS WALLETS ACTIVOS 🎩
-        // Traemos solo los serialNumbers de WalletDevice (es una consulta ultra ligera)
-        // Esto nos dice: "¿Quiénes tienen Apple Wallet realmente?"
+            switch (time) {
+                case '1week': dateLimit.setDate(now.getDate() - 7); break;
+                case '1month': dateLimit.setMonth(now.getMonth() - 1); break;
+                case '3months': dateLimit.setMonth(now.getMonth() - 3); break;
+                case '6months': dateLimit.setMonth(now.getMonth() - 6); break;
+                case '1year': dateLimit.setFullYear(now.getFullYear() - 1); break;
+            }
+            // Buscamos clientes modificados DESDE esa fecha
+            queryObj.updatedAt = { $gte: dateLimit };
+        }
+
+        // --- C. Filtro de Gasto (totalGastado) ---
+        if (spending && spending !== 'all') {
+            switch (spending) {
+                case 'low': queryObj.totalGastado = { $lt: 500 }; break;
+                case 'mid': queryObj.totalGastado = { $gte: 500, $lte: 1500 }; break;
+                case 'high': queryObj.totalGastado = { $gt: 1500 }; break;
+            }
+        }
+
+        // 3. EJECUTAR CONSULTAS (Count + Find)
+        // Primero contamos cuántos cumplen los filtros (para la paginación)
+        const totalItems = await Clientes.countDocuments(queryObj);
+
+        // Configurar campos a traer
+        const campos = 'nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet walletPlatform misDirecciones ultimaSemanaRegistrada premiosPendientes createdAt updatedAt totalGastado totalPedidos';
+
+        // Ejecutar búsqueda paginada
+        const clientes = await Clientes.find(queryObj)
+            .select(campos)
+            .sort({ updatedAt: -1 }) // Ordenar por actividad reciente
+            .skip((parseInt(page) - 1) * parseInt(limit))
+            .limit(parseInt(limit))
+            .lean();
+
+        // -------------------------------------------------------------
+        // 4. LÓGICA DE REPARACIÓN DE WALLETS (TU CÓDIGO ORIGINAL) 🎩
+        // -------------------------------------------------------------
         const walletDevices = await WalletDevice.find({}, 'serialNumber').lean();
-        
-        // Creamos un "Set" para búsqueda instantánea (O(1))
-        // Convertimos 'FRESH-663a...' a '663a...' para comparar fácil
-        const idsConApple = new Set(walletDevices.map(d => 
+
+        const idsConApple = new Set(walletDevices.map(d =>
             d.serialNumber.replace('FRESH-', '').replace('LEDUO-', '')
         ));
 
-        // 4. FUSIÓN DE DATOS (EN MEMORIA)
-        // Recorremos los clientes y si encontramos uno que está en la lista de Apple,
-        // le forzamos los datos correctos, aunque la DB de Clientes diga lo contrario.
         const clientesCorregidos = clientes.map(cliente => {
             const idString = cliente._id.toString();
-            
-            // ¿Está en la lista real de dispositivos Apple?
             const tieneAppleReal = idsConApple.has(idString);
-            
+
             if (tieneAppleReal) {
-                // CASO: Tiene Apple pero la DB no lo sabía o decía Google
                 if (!cliente.hasWallet) {
                     return { ...cliente, hasWallet: true, walletPlatform: 'apple' };
                 }
-                // CASO: Tiene Apple pero está marcado como solo Google (Dual user)
                 if (cliente.walletPlatform === 'google') {
                     return { ...cliente, hasWallet: true, walletPlatform: 'both' };
                 }
-                // Si ya dice apple, lo dejamos así
                 if (!cliente.walletPlatform) {
-                     return { ...cliente, hasWallet: true, walletPlatform: 'apple' };
+                    return { ...cliente, hasWallet: true, walletPlatform: 'apple' };
                 }
             }
-            
-            // Si no hay cambios, devolvemos el cliente original
             return cliente;
         });
+        // -------------------------------------------------------------
 
-        // 5. RESPONDER
-        if (page && limit) {
-             const total = await Clientes.countDocuments();
-             return res.status(200).json({
-                data: clientesCorregidos, // Enviamos la lista corregida
-                totalPages: Math.ceil(total / parseInt(limit)),
-                currentPage: parseInt(page),
-                totalItems: total
-            });
-        }
-
-        res.status(200).json(clientesCorregidos);
+        // 5. RESPONDER CON DATOS DE PAGINACIÓN CORRECTOS
+        res.status(200).json({
+            data: clientesCorregidos,
+            totalPages: Math.ceil(totalItems / parseInt(limit)),
+            currentPage: parseInt(page),
+            totalItems: totalItems
+        });
 
     } catch (err) {
         console.error("Error cargando clientes:", err);
@@ -260,7 +285,7 @@ router.get('/diagnostico', async (req, res) => {
         const { nombre } = req.query;
         // Busca un cliente que coincida con el nombre
         const cliente = await Clientes.findOne({ nombre: { $regex: nombre, $options: 'i' } });
-        
+
         if (!cliente) return res.json({ error: "No encontrado" });
 
         res.json({
@@ -304,7 +329,7 @@ router.get('/sync-wallets', async (req, res) => {
                 if (cliente && cliente.walletPlatform === 'apple') {
                     platform = 'both'; // Si ya tenía Apple, ahora tiene AMBOS
                 }
-                
+
                 await Clientes.findByIdAndUpdate(cleanId, { hasWallet: true, walletPlatform: platform });
                 log.push(`🤖 Google set (${platform}): ${cleanId}`);
             }
@@ -323,14 +348,14 @@ router.get('/sync-wallets', async (req, res) => {
 router.get('/debug-google', async (req, res) => {
     try {
         const GoogleWalletObject = require('../models/GoogleWalletObject');
-        
+
         // 1. Traer TODOS los objetos de Google para ver su estructura
         const all = await GoogleWalletObject.find({});
-        
+
         // 2. Buscar específicamente al de Don James
         const targetId = '69519ba81db92467a91a265d';
         const specific = await GoogleWalletObject.findOne({ clienteId: targetId });
-        
+
         res.json({
             totalObjects: all.length,
             structureExample: all[0], // Para ver si el campo se llama 'clienteId', 'clientId', 'user_id', etc.
