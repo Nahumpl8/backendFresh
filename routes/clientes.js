@@ -176,29 +176,30 @@ router.put('/canjear/:telefono', async (req, res) => {
 // ====================================================================
 // 🚀 OBTENER CLIENTES (CON FILTROS AVANZADOS + WALLET FIX)
 // ====================================================================
+// ====================================================================
+// 🚀 OBTENER CLIENTES (FILTROS + WALLET + SIN PEDIDO RECIENTE)
+// ====================================================================
 router.get('/', async (req, res) => {
     try {
-        // 1. EXTRAER PARÁMETROS DE LA URL
-        const { page = 1, limit = 10, q, time, spending } = req.query;
+        // 1. EXTRAER PARÁMETROS
+        // Agregamos 'notOrderedWeek'
+        const { page = 1, limit = 10, q, time, spending, notOrderedWeek } = req.query;
         const WalletDevice = require('../models/WalletDevice');
+        // Asegúrate de que Pedido esté importado arriba: const Pedido = require('../models/Pedidos');
 
-        // 2. CONSTRUIR EL OBJETO DE BÚSQUEDA (QUERY)
+        // 2. CONSTRUIR QUERY INICIAL
         let queryObj = {};
 
         // --- A. Filtro de Búsqueda (Texto) ---
         if (q && q.length > 0) {
-            const regex = new RegExp(q, 'i'); // Case insensitive
-            queryObj.$or = [
-                { nombre: regex },
-                { telefono: regex }
-            ];
+            const regex = new RegExp(q, 'i');
+            queryObj.$or = [{ nombre: regex }, { telefono: regex }];
         }
 
-        // --- B. Filtro de Tiempo (updatedAt: Última actividad) ---
+        // --- B. Filtro de Tiempo (updatedAt: Actividad reciente) ---
         if (time && time !== 'all') {
             const now = new Date();
             let dateLimit = new Date();
-
             switch (time) {
                 case '1week': dateLimit.setDate(now.getDate() - 7); break;
                 case '1month': dateLimit.setMonth(now.getMonth() - 1); break;
@@ -206,11 +207,10 @@ router.get('/', async (req, res) => {
                 case '6months': dateLimit.setMonth(now.getMonth() - 6); break;
                 case '1year': dateLimit.setFullYear(now.getFullYear() - 1); break;
             }
-            // Buscamos clientes modificados DESDE esa fecha
             queryObj.updatedAt = { $gte: dateLimit };
         }
 
-        // --- C. Filtro de Gasto (totalGastado) ---
+        // --- C. Filtro de Gasto ---
         if (spending && spending !== 'all') {
             switch (spending) {
                 case 'low': queryObj.totalGastado = { $lt: 500 }; break;
@@ -219,14 +219,35 @@ router.get('/', async (req, res) => {
             }
         }
 
-        // 3. EJECUTAR CONSULTAS (Count + Find)
-        // Primero contamos cuántos cumplen los filtros (para la paginación)
+        // --- D. 🔥 NUEVO FILTRO: NO HAN PEDIDO ESTA SEMANA ---
+        if (notOrderedWeek === 'true') {
+            // Buscamos pedidos creados en los últimos 7 días
+            const sieteDiasAtras = new Date(new Date().setDate(new Date().getDate() - 7));
+
+            const pedidosRecientes = await Pedido.find({
+                createdAt: { $gte: sieteDiasAtras }
+            }).select('telefono');
+
+            const telefonosActivos = pedidosRecientes.map(p => p.telefono);
+
+            // EXCLUIR esos teléfonos ($nin = Not In)
+            // Si ya había un filtro de teléfono (por búsqueda), usamos $and para no sobrescribirlo
+            if (queryObj.$or) {
+                queryObj.$and = [
+                    { $or: queryObj.$or },
+                    { telefono: { $nin: telefonosActivos } }
+                ];
+                delete queryObj.$or; // Movemos el $or adentro del $and
+            } else {
+                queryObj.telefono = { $nin: telefonosActivos };
+            }
+        }
+
+        // 3. EJECUTAR CONSULTA (Count + Find)
         const totalItems = await Clientes.countDocuments(queryObj);
 
-        // Configurar campos a traer
         const campos = 'nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet walletPlatform misDirecciones ultimaSemanaRegistrada premiosPendientes createdAt updatedAt totalGastado totalPedidos';
 
-        // Ejecutar búsqueda paginada
         const clientes = await Clientes.find(queryObj)
             .select(campos)
             .sort({ updatedAt: -1 }) // Ordenar por actividad reciente
@@ -248,21 +269,15 @@ router.get('/', async (req, res) => {
             const tieneAppleReal = idsConApple.has(idString);
 
             if (tieneAppleReal) {
-                if (!cliente.hasWallet) {
-                    return { ...cliente, hasWallet: true, walletPlatform: 'apple' };
-                }
-                if (cliente.walletPlatform === 'google') {
-                    return { ...cliente, hasWallet: true, walletPlatform: 'both' };
-                }
-                if (!cliente.walletPlatform) {
-                    return { ...cliente, hasWallet: true, walletPlatform: 'apple' };
-                }
+                if (!cliente.hasWallet) return { ...cliente, hasWallet: true, walletPlatform: 'apple' };
+                if (cliente.walletPlatform === 'google') return { ...cliente, hasWallet: true, walletPlatform: 'both' };
+                if (!cliente.walletPlatform) return { ...cliente, hasWallet: true, walletPlatform: 'apple' };
             }
             return cliente;
         });
         // -------------------------------------------------------------
 
-        // 5. RESPONDER CON DATOS DE PAGINACIÓN CORRECTOS
+        // 5. RESPONDER
         res.status(200).json({
             data: clientesCorregidos,
             totalPages: Math.ceil(totalItems / parseInt(limit)),
@@ -448,13 +463,11 @@ router.get('/lite', async (req, res) => {
 router.get('/inactivos-semana', async (req, res) => {
     try {
         const fechasSemana = [
-            'lunes, 22 Diciembre 2025',
-            'martes, 23 Diciembre 2025',
-            'miércoles, 24 Diciembre 2025',
-            'jueves, 25 Diciembre 2025',
-            'viernes, 26 Diciembre 2025',
-            'sábado, 27 Diciembre 2025',
-            'domingo, 28 Diciembre 2025',
+            'miércoles, 7 Enero 2026',
+            'jueves, 8 Enero 2026',
+            'viernes, 9 Enero 2026',
+            'sábado, 10 Enero 2026',
+            'domingo, 11 Enero 2026',
         ];
         const pedidosSemana = await Pedido.find({ fecha: { $in: fechasSemana } });
         const telefonosActivos = pedidosSemana.map(p => p.telefono);
