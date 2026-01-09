@@ -193,7 +193,7 @@ async function generateApplePass(clientId, res, isDownload = false) {
                 { key: "marketing_promo", label: promoTitle, value: promoMessage, textAlignment: "PKTextAlignmentLeft", changeMessage: "%@" },
                 { key: "account_info", label: "👤 TITULAR", value: `${nombreLimpio}}`, textAlignment: "PKTextAlignmentRight" },
                 { key: "quick_links", label: "📱 CONTACTO RÁPIDO", value: "WhatsApp: 7712346620", textAlignment: "PKTextAlignmentLeft" },
-                { key: "how_it_works", label: "🙌 TU TARJETA FRESH", value: "🥕 Recibe 1 sello por compras mayores a $300.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico.", textAlignment: "PKTextAlignmentLeft" },
+                { key: "how_it_works", label: "🙌 TU TARJETA FRESH", value: "🥕 Recibe por semana 1 sello por compras mayores a $285.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico.", textAlignment: "PKTextAlignmentLeft" },
                 { key: "last_update", label: "⏰ Última Actualización", value: new Date().toLocaleString('es-MX', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }), textAlignment: "PKTextAlignmentRight" }
             ]
         },
