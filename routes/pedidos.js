@@ -1,11 +1,18 @@
 const router = require('express').Router();
 const Pedido = require('../models/Pedidos');
 const Clientes = require('../models/Clientes');
+// Si no usas verifyToken en estas rutas, puedes comentar la línea siguiente, 
+// pero es buena práctica tenerla importada por si acaso.
 const { verifyToken, verifyTokenAndAuthorization } = require('./verifyToken');
 const notifyPassUpdate = require('../utils/pushApple');
+
 const BASE_URL = process.env.BASE_URL || 'https://backendfresh-production.up.railway.app';
 
-// 🟢 NUEVO: Función para detectar Año-Semana de forma estándar
+// ==========================================
+// 📅 HELPER FUNCTIONS (FECHAS Y SEMANAS)
+// ==========================================
+
+// 🟢 NUEVO: Función para detectar Año-Semana de forma estándar (ISO)
 function getWeekString(date) {
     const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
     const dayNum = d.getUTCDay() || 7;
@@ -15,7 +22,7 @@ function getWeekString(date) {
     return `${year}-${weekNo}`;
 }
 
-// (Mantenemos tu función de streak vieja por si acaso, aunque la nueva es mejor)
+// (Legacy) Función de streak vieja
 function getWeekNumber(date) {
     const firstDay = new Date(date.getFullYear(), 0, 1);
     const pastDays = Math.floor((date - firstDay) / 86400000);
@@ -33,9 +40,9 @@ function esSemanaAnterior(anterior, actual) {
 }
 
 // ==========================================
-// 📊 1. REPORTE DE PROMOTORES (Ruta Nueva)
+// 📊 1. REPORTE DE PROMOTORES (Analytics)
 // ==========================================
-router.get('/stats/promotores', async (req, res) => { // 👈 NUEVO BLOQUE
+router.get('/stats/promotores', async (req, res) => {
     try {
         const { mes, anio } = req.query;
         const now = new Date();
@@ -70,7 +77,7 @@ router.get('/stats/promotores', async (req, res) => { // 👈 NUEVO BLOQUE
 });
 
 // ==========================================
-// CREAR NUEVO PEDIDO (POST /new)
+// 📝 2. CREAR NUEVO PEDIDO (Logica Completa)
 // ==========================================
 router.post('/new', async (req, res) => {
     console.log("📝 Recibiendo nuevo pedido...");
@@ -78,10 +85,10 @@ router.post('/new', async (req, res) => {
     try {
         const { telefono, puntosUsados, total } = req.body;
 
-        // 🟢 2. CAMBIO: Buscamos al cliente PRIMERO (para ver su vendedor)
+        // Buscar al cliente para ver su vendedor
         const cliente = await Clientes.findOne({ telefono: telefono });
 
-        // --- LÓGICA DE PROMOTORES 💰 ---
+        // --- LÓGICA DE PROMOTORES ---
         let vendedor = 'Fresh Market';
         let comision = 0;
         let esClienteNuevo = false;
@@ -94,21 +101,22 @@ router.post('/new', async (req, res) => {
         if (vendedor !== 'Fresh Market') {
             const pedidosAnteriores = await Pedido.countDocuments({ telefono: telefono });
             if (pedidosAnteriores === 0) {
-                comision = 20; // Cliente Nuevo
+                comision = 20; // Comisión Cliente Nuevo
                 esClienteNuevo = true;
             } else {
-                comision = 10; // Recurrente
+                comision = 10; // Comisión Recurrente
                 esClienteNuevo = false;
             }
         }
 
-        // Guardamos el pedido con los datos nuevos
+        // Crear objeto del pedido
         const newPedido = new Pedido({
             ...req.body,
-            vendedor,      // 👈 Guardamos quién vendió
-            comision,      // 👈 Guardamos cuánto ganó
+            vendedor,
+            comision,
             esClienteNuevo
         });
+
         const savedPedido = await newPedido.save();
         console.log("✅ Pedido guardado ID:", savedPedido._id);
 
@@ -117,65 +125,65 @@ router.post('/new', async (req, res) => {
             walletLinks: null
         };
 
-        // 3. Actualizar Cliente
+        // --- ACTUALIZACIÓN DE CLIENTE (Puntos y Sellos) ---
         if (cliente) {
             console.log("👤 Actualizando cliente:", cliente.nombre);
 
             const totalGastado = (cliente.totalGastado || 0) + req.body.total;
             const totalPedidos = (cliente.totalPedidos || 0) + 1;
 
-            // 🟢 CAMBIO CASHBACK: 1.2%
+            // 1. CASHBACK: 1.2%
             const efectivoGastado = req.body.total - (puntosUsados || 0);
-            const nuevosPuntos = Math.round(efectivoGastado * 0.012); // 👈 CAMBIADO DE 0.015 A 0.012
+            const nuevosPuntos = Math.round(efectivoGastado * 0.012); 
             const puntos = (cliente.puntos || 0) - puntosUsados + nuevosPuntos;
 
-            // --- Lógica de Racha (La mantenemos igual) ---
+            // 2. LÓGICA DE RACHA (Semanas seguidas)
             const now = new Date();
             const semanaActualRacha = `${now.getFullYear()}-${getWeekNumber(now)}`;
             let semanasSeguidas = cliente.semanasSeguidas || 0;
 
             if (cliente.ultimaSemanaRegistrada === semanaActualRacha) {
-                // misma semana
+                // Misma semana, no aumenta racha
             } else if (esSemanaAnterior(cliente.ultimaSemanaRegistrada, semanaActualRacha)) {
                 semanasSeguidas += 1;
             } else {
-                semanasSeguidas = 1;
+                semanasSeguidas = 1; // Rompió racha
             }
             const regaloDisponible = semanasSeguidas >= 4;
 
-            // 🟢 3. NUEVA LÓGICA DE SELLOS (Compleja)
+            // 3. LÓGICA DE SELLOS (Wallet)
             const semanaSelloActual = getWeekString(new Date());
             let sellos = cliente.sellos || 0;
-            let sellosSemestrales = cliente.sellosSemestrales || 0; // 👈 NUEVO ACUMULADOR
+            let sellosSemestrales = cliente.sellosSemestrales || 0; 
             let tarjetasCompletadas = cliente.tarjetasCompletadas || 0;
             let premioDisponibleWallet = cliente.premioDisponible || false;
             let ultimaSemanaSello = cliente.ultimaSemanaSello || '';
 
-            // Solo damos sello si es una semana DIFERENTE
+            // Solo damos sello si es una semana DIFERENTE a la última registrada
             if (ultimaSemanaSello !== semanaSelloActual) {
-
-                // Si ya tenía 8 y premio disponible, este es el pedido de CANJE (el noveno)
+                // Si ya tenía 8 y premio disponible, asumimos que este pedido es el canje o el inicio de una nueva tarjeta
                 if (sellos >= 8) {
-                    sellos = 1; // 👈 Reinicia a 1
-                    premioDisponibleWallet = false; // 👈 Ya usó su premio
+                    sellos = 1; // Reinicia la tarjeta
+                    premioDisponibleWallet = false; // Se consume el premio anterior
                     tarjetasCompletadas += 1;
                 } else {
-                    sellos += 1; // Sube normal
+                    sellos += 1; // Aumenta sello
                 }
 
-                sellosSemestrales += 1; // 👈 Este siempre sube (para Nivel Leyenda)
+                sellosSemestrales += 1; // Acumulador histórico (para niveles)
 
                 // Si llega a 8 exactos, activamos el premio
                 if (sellos === 8) {
                     premioDisponibleWallet = true;
                 }
 
-                ultimaSemanaSello = semanaSelloActual; // Marcamos que ya pidió esta semana
-                console.log(`✅ Sello otorgado. Tarjeta: ${sellos}/8.`);
+                ultimaSemanaSello = semanaSelloActual;
+                console.log(`✅ Sello otorgado. Tarjeta actual: ${sellos}/8.`);
             } else {
                 console.log(`⏳ Mismo pedido en semana ${semanaSelloActual}. No se otorga sello.`);
             }
 
+            // Guardar cambios en Cliente
             await cliente.updateOne({
                 $set: {
                     totalGastado,
@@ -184,17 +192,16 @@ router.post('/new', async (req, res) => {
                     semanasSeguidas,
                     regaloDisponible,
                     ultimaSemanaRegistrada: semanaActualRacha,
-
-                    // Campos nuevos de sellos
-                    sellos: sellos,
-                    sellosSemestrales: sellosSemestrales,
+                    // Wallet fields
+                    sellos,
+                    sellosSemestrales,
                     premioDisponible: premioDisponibleWallet,
-                    ultimaSemanaSello: ultimaSemanaSello,
-                    tarjetasCompletadas: tarjetasCompletadas
+                    ultimaSemanaSello,
+                    tarjetasCompletadas
                 }
             });
 
-            // 🔔 NOTIFICACIÓN WALLET
+            // Notificar a Wallet (Apple/Google)
             notifyPassUpdate(cliente._id).catch(err => console.error("❌ Error push wallet:", err));
 
             responsePayload.walletLinks = {
@@ -211,7 +218,11 @@ router.post('/new', async (req, res) => {
     }
 });
 
-// Editar pedido (Sin cambios)
+// ==========================================
+// RUTAS CRUD ESTÁNDAR
+// ==========================================
+
+// EDITAR PEDIDO
 router.put('/:id', async (req, res) => {
     try {
         const updatedPedido = await Pedido.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
@@ -222,7 +233,7 @@ router.put('/:id', async (req, res) => {
     }
 });
 
-// Eliminar pedido
+// ELIMINAR PEDIDO (Reversión de puntos/sellos)
 router.delete('/:id', async (req, res) => {
     try {
         const pedido = await Pedido.findById(req.params.id);
@@ -231,24 +242,22 @@ router.delete('/:id', async (req, res) => {
         const cliente = await Clientes.findOne({ telefono: pedido.telefono });
 
         if (cliente) {
-            // 🟢 CAMBIO CASHBACK: 1.2% (Reversión)
-            const puntosGanados = Math.round((pedido.total - (pedido.puntosUsados || 0)) * 0.012); // 👈 CAMBIADO A 0.012
+            // Revertir Puntos (1.2%)
+            const puntosGanados = Math.round((pedido.total - (pedido.puntosUsados || 0)) * 0.012); 
             const puntosDevueltos = pedido.puntosUsados || 0;
             const nuevosPuntos = (cliente.puntos || 0) - puntosGanados + puntosDevueltos;
             const puntosFinal = nuevosPuntos >= 0 ? nuevosPuntos : 0;
 
-            // Revertir sellos (Simplificado: Restamos 1, aunque no es exacto por fechas)
+            // Revertir Sellos (Aproximación simple: resta 1)
             const nuevosSellos = (cliente.sellos || 0) - 1;
             const sellosFinal = nuevosSellos >= 0 ? nuevosSellos : 0;
-
-            // Revertir semestrales también
             const nuevosSemestrales = (cliente.sellosSemestrales || 0) - 1;
 
             await cliente.updateOne({
                 $set: {
                     puntos: puntosFinal,
                     sellos: sellosFinal,
-                    sellosSemestrales: nuevosSemestrales >= 0 ? nuevosSemestrales : 0, // 👈 Actualizamos este
+                    sellosSemestrales: nuevosSemestrales >= 0 ? nuevosSemestrales : 0,
                     totalGastado: (cliente.totalGastado || 0) - pedido.total,
                     totalPedidos: (cliente.totalPedidos || 0) - 1
                 }
@@ -263,10 +272,7 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
-// ... (Resto de tus rutas GET find, cliente, semana, semanaPasada, buscar-fecha se quedan IGUAL) ...
-// (Pégalas aquí abajo tal cual las tenías en tu archivo original)
-
-// Obtener un pedido
+// OBTENER UN PEDIDO POR ID
 router.get('/find/:id', async (req, res) => {
     try {
         const pedido = await Pedido.findById(req.params.id);
@@ -276,7 +282,7 @@ router.get('/find/:id', async (req, res) => {
     }
 });
 
-// Obtener pedidos por cliente
+// OBTENER PEDIDOS POR CLIENTE
 router.get('/cliente/:telefono', async (req, res) => {
     try {
         const pedidos = await Pedido.find({ telefono: req.params.telefono }).sort({ createdAt: -1 });
@@ -286,45 +292,84 @@ router.get('/cliente/:telefono', async (req, res) => {
     }
 });
 
+// ==========================================
+// 🚀 RUTAS DE BÚSQUEDA Y FILTRADO (SOLUCIÓN PDF)
+// ==========================================
+
+// GET /api/pedidos (TODOS o FILTRADOS POR FECHA)
+// Esta ruta maneja tanto la carga inicial como el filtro del PDF
 router.get('/', async (req, res) => {
     try {
-        const limit = req.query.limit ? parseInt(req.query.limit) : 100;
-        const pedidos = await Pedido.find().sort({ createdAt: -1 }).limit(limit);
+        const { fecha, limit } = req.query;
+        let query = {};
+        let options = { sort: { createdAt: -1 } };
+
+        // 1. Si hay límite, lo aplicamos
+        if (limit) {
+            options.limit = parseInt(limit);
+        }
+
+        // 2. Si hay FECHA (para el PDF), filtramos aquí en el servidor
+        if (fecha) {
+            // Usamos regex para buscar la cadena de fecha sin importar mayúsculas
+            query.fecha = { $regex: fecha.trim(), $options: 'i' };
+            // Si buscamos por fecha, quitamos el límite para que salgan todos los de ese día
+            delete options.limit; 
+        }
+
+        const pedidos = await Pedido.find(query, null, options);
         res.status(200).json(pedidos);
+
     } catch (err) {
-        console.error(err);
+        console.error("Error al obtener pedidos:", err);
         res.status(500).json({ error: 'Error interno del servidor.' });
     }
 });
 
+// OBTENER PEDIDOS DE ESTA SEMANA
 router.get('/semana', async (req, res) => {
-    const today = new Date();
-    const monday = new Date(today.setDate(today.getDate() - today.getDay() + 1));
-    monday.setHours(0, 0, 0, 0);
-    const sunday = new Date(today.setDate(today.getDate() - today.getDay() + 7));
-    sunday.setHours(23, 59, 59, 999);
-    const pedidosThisWeek = await Pedido.find({ createdAt: { $gte: monday, $lte: sunday } }).sort({ createdAt: -1 });
-    res.json(pedidosThisWeek);
+    try {
+        const today = new Date();
+        const monday = new Date(today.setDate(today.getDate() - today.getDay() + 1));
+        monday.setHours(0, 0, 0, 0);
+        const sunday = new Date(today.setDate(today.getDate() - today.getDay() + 7));
+        sunday.setHours(23, 59, 59, 999);
+        const pedidosThisWeek = await Pedido.find({ createdAt: { $gte: monday, $lte: sunday } }).sort({ createdAt: -1 });
+        res.json(pedidosThisWeek);
+    } catch (err) {
+        res.status(500).json(err);
+    }
 });
 
+// OBTENER PEDIDOS DE LA SEMANA PASADA
 router.get('/semanaPasada', async (req, res) => {
-    const today = new Date();
-    const mondayThisWeek = new Date(today.setDate(today.getDate() - today.getDay() + 1));
-    const lastSunday = new Date(mondayThisWeek);
-    lastSunday.setDate(lastSunday.getDate() - 1);
-    lastSunday.setHours(23, 59, 59, 999);
-    const lastMonday = new Date(mondayThisWeek);
-    lastMonday.setDate(lastMonday.getDate() - 7);
-    lastMonday.setHours(0, 0, 0, 0);
-    const pedidosLastWeek = await Pedido.find({ createdAt: { $gte: lastMonday, $lte: lastSunday } }).sort({ createdAt: -1 });
-    res.json(pedidosLastWeek);
+    try {
+        const today = new Date();
+        const mondayThisWeek = new Date(today.setDate(today.getDate() - today.getDay() + 1));
+        const lastSunday = new Date(mondayThisWeek);
+        lastSunday.setDate(lastSunday.getDate() - 1);
+        lastSunday.setHours(23, 59, 59, 999);
+        const lastMonday = new Date(mondayThisWeek);
+        lastMonday.setDate(lastMonday.getDate() - 7);
+        lastMonday.setHours(0, 0, 0, 0);
+        const pedidosLastWeek = await Pedido.find({ createdAt: { $gte: lastMonday, $lte: lastSunday } }).sort({ createdAt: -1 });
+        res.json(pedidosLastWeek);
+    } catch (err) {
+        res.status(500).json(err);
+    }
 });
 
+// RUTA DE BÚSQUEDA ESPECÍFICA (LEGACY O ALIAS)
+// Mantenemos esta por si tu frontend antiguo la usa, pero hace lo mismo que la ruta '/' con query param
 router.get('/buscar-fecha', async (req, res) => {
     try {
         const fechaBusqueda = req.query.fecha;
         if (!fechaBusqueda) return res.status(400).json([]);
-        const pedidos = await Pedido.find({ fecha: { $regex: fechaBusqueda, $options: 'i' } }).sort({ cliente: 1 });
+        
+        const pedidos = await Pedido.find({ 
+            fecha: { $regex: fechaBusqueda, $options: 'i' } 
+        }).sort({ cliente: 1 });
+        
         res.json(pedidos);
     } catch (err) {
         console.error("Error buscando por fecha:", err);
