@@ -3,7 +3,18 @@ const app = express();
 const mongoose = require('mongoose');
 const path = require('path');
 const dotenv = require('dotenv');
+const cors = require('cors');
+
+// Configuración básica
+dotenv.config();
+app.use(cors());
+app.options('*', cors());
+app.use(express.json());
+
+// Archivos estáticos
 app.use('/public', express.static(path.join(__dirname, 'assets')));
+
+// --- IMPORTACIÓN DE RUTAS ---
 const userRoute = require('./routes/users');
 const authRoute = require('./routes/auth');
 const productRoute = require('./routes/product');
@@ -13,33 +24,22 @@ const clientesRoute = require('./routes/clientes');
 const pedidosRoute = require('./routes/pedidos');
 const despensasRoute = require('./routes/despensas');
 const rouletteRoutes = require('./routes/roulette');
-const walletRoute = require('./routes/wallet');
-const appleServiceRoute = require('./routes/appleService');
 const clientesAuthRoute = require('./routes/clientesAuth');
 const marketingRoute = require('./routes/marketing');
 const vendedoresRoute = require('./routes/vendedores');
 
+// 🟢 Aquí unificamos todo: Apple + Google + Redirecciones en un solo servicio
+const walletServiceRoute = require('./routes/walletService'); 
 
+// --- CONEXIÓN A MONGODB ---
+mongoose.connect(process.env.MONGO_URL)
+    .then(() => { console.log('Connected to MongoDB') })
+    .catch((err) => { console.log('Error: ', err) });
 
-const cors = require('cors');
-app.use(cors());
-dotenv.config();
-app.options('*', cors());
-
-
-// Connect to MongoDB
-mongoose.connect(
-    process.env.MONGO_URL
-    ).then(()=>{console.log('Connected to MongoDB')})
-    .catch((err)=>{   console.log('Error: ', err)});
-
-app.use(express.json());
-
+// --- DEFINICIÓN DE ENDPOINTS ---
 app.get('/', (req, res) => {
   res.send('Welcome to the backend server!');
 });
-
-
 
 app.use("/api/auth", authRoute);
 app.use("/api/users", userRoute);
@@ -50,14 +50,14 @@ app.use("/api/clientes", clientesRoute);
 app.use("/api/pedidos", pedidosRoute);
 app.use("/api/despensas", despensasRoute);
 app.use('/api/roulette', rouletteRoutes);
-app.use('/api/wallet', walletRoute);
-app.use('/api/wallet', appleServiceRoute);
 app.use('/api/clientes-auth', clientesAuthRoute);
 app.use('/api/marketing', marketingRoute);
 app.use('/api/vendedores', vendedoresRoute);
 
+// 🟢 Ruta Única para Wallet
+app.use('/api/wallet', walletServiceRoute);
 
-
+// --- SERVIDOR ---
 app.listen(process.env.PORT || 3000, () => {
   console.log('Backend server is running on port 3000!');
 });
