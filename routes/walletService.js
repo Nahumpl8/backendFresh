@@ -184,7 +184,7 @@ async function generateApplePass(clientId, res, isDownload = false) {
             ],
             secondaryFields: [
                 { key: "balance_sellos", label: "MIS SELLOS", value: `${sellosVisuales} de 8`, textAlignment: "PKTextAlignmentLeft", changeMessage: "¡Actualización! Ahora tienes %@ sellos 🥕" },
-                { key: 'nivel_info', label: 'TITULAR', value: `${nombreLimpio} ${nivelNombre}`, textAlignment: "PKTextAlignmentRight" }
+                { key: 'nivel_info', label: 'TITULAR', value: `${nombreLimpio}`, textAlignment: "PKTextAlignmentRight" }
             ],
             auxiliaryFields: [
                 { key: "status", label: "ESTATUS", value: statusText, textAlignment: "PKTextAlignmentCenter" }
