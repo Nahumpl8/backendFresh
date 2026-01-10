@@ -15,6 +15,7 @@ const jwt = require('jsonwebtoken');
 const apn = require('apn');
 
 const { notifyGoogleWalletUpdate } = require('../utils/pushGoogle');
+const notifyPassUpdate = require('../utils/pushApple');
 
 // SECRETOS Y CONFIGURACIÓN
 const WALLET_SECRET = process.env.WALLET_SECRET || 'fresh-market-secret-key-2025';
@@ -116,7 +117,10 @@ async function generateApplePass(clientId, res, isDownload = false) {
     let promoTitle = "📢 NOVEDADES";
     let promoMessage = "🥕 ¡Bienvenido a Fresh Market!";
     try {
-        const lastCampaign = await MarketingCampaign.findOne().sort({ sentAt: -1 });
+        // 👇 CAMBIO AQUÍ: Agregamos { isTest: { $ne: true } }
+        // Esto significa: Trae la última, PERO que NO sea de prueba.
+        const lastCampaign = await MarketingCampaign.findOne({ isTest: { $ne: true } }).sort({ sentAt: -1 });
+
         if (lastCampaign) {
             promoTitle = "📢 " + (lastCampaign.title || "NOVEDADES");
             promoMessage = lastCampaign.message;
@@ -188,7 +192,7 @@ async function generateApplePass(clientId, res, isDownload = false) {
         webServiceURL: WEB_SERVICE_URL,
         authenticationToken: authToken,
         userInfo: { generatedAt: new Date().toISOString(), forceUpdate: Math.random().toString() },
-        locations: [{ latitude: 20.102220, longitude: -98.761820, relevantText: "🥕 Fresh Market te espera." }],
+        locations: [{ latitude: 20.0979892, longitude: -98.7709978, relevantText: "🥕 No olvides hacer tu pedido Fresh Market esta semana. 👋" }],
         storeCard: {
             headerFields: [
                 { key: "header_puntos", label: "Puntos", value: `${numPuntos} pts`, textAlignment: "PKTextAlignmentRight", changeMessage: "Tus puntos cambiaron a %@" }
@@ -282,7 +286,7 @@ router.get('/google/:clientId', async (req, res) => {
         // Esto asegura que desde que lo bajan se vea "3/8 sellos" y no el nombre
         const textoPortada = numSellos >= 8
             ? "🎁 ¡Premio disponible!"
-            : `${sellosVisuales}/8 sellos • $${(cliente.puntos || 0).toFixed(0)} pts`;
+            : `${sellosVisuales}/8 sellos • ${(cliente.puntos || 0).toFixed(0)} pts`;
 
         // --- GESTIÓN DE VERSIÓN Y BD ---
         let walletObject = await GoogleWalletObject.findOne({ objectId });
@@ -344,7 +348,7 @@ router.get('/google/:clientId', async (req, res) => {
                         // 👇 3. IMPORTANTE: Mover el nombre real aquí
                         { header: "Titular", body: nombreLimpio, id: "account_holder" },
                         { header: 'Nivel actual', body: `${nivelNombre}`, id: "status_module" },
-                        { header: "Novedades", body: "🥕 ¡Sigue acumulando!", id: "news_module" }
+                        { header: "Novedades", body: "🥕 ¡Sigue acumulando puntos y sellos!", id: "news_module" }
                     ]
                 }]
             }
@@ -468,6 +472,88 @@ router.post('/notify-bulk', async (req, res) => {
             total: clientIds.length
         }
     });
+});
+
+
+// ==========================================
+// 🧪 LINK DE PRUEBA UNITARIA (Flexible)
+// Uso simple: .../test-push/ID_CLIENTE (Usa último msj de BD)
+// Uso custom: .../test-push/ID_CLIENTE?title=Hola&message=Probando (Usa tu texto)
+// ==========================================
+router.get('/test-push/:clientId', async (req, res) => {
+    try {
+        const { clientId } = req.params;
+        const cleanId = clientId.trim();
+        const { title, message } = req.query;
+
+        // 1. Buscar Cliente
+        const cliente = await Clientes.findById(cleanId);
+        if (!cliente) return res.status(404).send("Cliente no encontrado en BD");
+
+        console.log(`🧪 TEST-PUSH para: ${cliente.nombre}`);
+
+        // 2. Datos Custom
+        let customData = null;
+        if (title && message) {
+            customData = { title, message };
+            // 🔥 TRUCO APPLE
+            if (cliente.walletPlatform === 'apple' || cliente.walletPlatform === 'both') {
+                 await MarketingCampaign.create({
+                    title: title,
+                    message: message,
+                    sentAt: new Date(),
+                    isTest: true // 👈 AGREGAMOS ESTA BANDERA
+                });
+                console.log("🍏 Apple: Campaña TEST guardada en BD");
+            }
+        }
+
+        let log = [];
+
+        // -----------------------------------------------------
+        // 🤖 INTENTO GOOGLE (Forzado)
+        // -----------------------------------------------------
+        try {
+            await notifyGoogleWalletUpdate(cleanId, customData);
+            log.push("✅ Google: Orden enviada");
+        } catch (e) {
+            log.push(`❌ Google Error: ${e.message}`);
+        }
+
+        // -----------------------------------------------------
+        // 🍏 INTENTO APPLE (Verificando dispositivos)
+        // -----------------------------------------------------
+        const devices = await WalletDevice.find({ serialNumber: `FRESH-${cleanId}` });
+
+        if (devices.length > 0) {
+            try {
+                // Notificamos a Apple. El iPhone pedirá el pase nuevo -> Leerá la Campaña de BD -> Mostrará notificación.
+                await notifyPassUpdate(cleanId);
+                log.push(`✅ Apple: Enviado a ${devices.length} dispositivo(s)`);
+            } catch (e) {
+                log.push(`❌ Apple Error: ${e.message}`);
+            }
+        } else {
+            log.push(`⚠️ Apple: No se enviará (0 dispositivos encontrados).`);
+        }
+
+        // Respuesta Visual
+        res.send(`
+            <div style="font-family: sans-serif; padding: 20px;">
+                <h1 style="color: #007bff;">Diagnóstico de Notificación</h1>
+                <p><strong>Cliente:</strong> ${cliente.nombre}</p>
+                <p><strong>Plataforma BD:</strong> ${cliente.walletPlatform}</p>
+                <hr>
+                <h3>Resultados:</h3>
+                <ul>${log.map(l => `<li>${l}</li>`).join('')}</ul>
+                <button onclick="window.history.back()" style="padding:10px; cursor:pointer; margin-top:20px;">⬅ Volver</button>
+            </div>
+        `);
+
+    } catch (err) {
+        console.error("❌ Error Fatal en Prueba:", err);
+        res.status(500).send(`Error Fatal: ${err.message}`);
+    }
 });
 
 // ==========================================

@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
+const clientes = require('../models/Clientes');
 
 // 1. TUS DATOS
 const ISSUER_ID = '3388000000023046225';
@@ -7,11 +8,13 @@ const SERVICE_ACCOUNT = require('./keys.json'); // Asegúrate de tener keys.json
 
 const classId = `${ISSUER_ID}.fresh_market_loyal`;
 
+
+
 // 2. EL DISEÑO NUEVO QUE QUIERES
 const loyaltyClass = {
     "id": classId,
     "issuerName": "Fresh Market",
-    "programName": "Recompensas Fresh Market",
+    "programName": "Fresh Market Loyalty Program",
     "programLogo": {
         "sourceUri": {
             "uri": "https://i.ibb.co/1G5kMjc4/logo.png" // Tu logo

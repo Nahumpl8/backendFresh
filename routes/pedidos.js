@@ -5,6 +5,8 @@ const Clientes = require('../models/Clientes');
 // pero es buena práctica tenerla importada por si acaso.
 const { verifyToken, verifyTokenAndAuthorization } = require('./verifyToken');
 const notifyPassUpdate = require('../utils/pushApple');
+// 👇 IMPORTANTE: Importamos la lógica de notificación de Google
+const { notifyGoogleWalletUpdate } = require('../utils/pushGoogle');
 
 const BASE_URL = process.env.BASE_URL || 'https://backendfresh-production.up.railway.app';
 
@@ -201,8 +203,19 @@ router.post('/new', async (req, res) => {
                 }
             });
 
-            // Notificar a Wallet (Apple/Google)
-            notifyPassUpdate(cliente._id).catch(err => console.error("❌ Error push wallet:", err));
+            // ---------------------------------------------
+            // 🚀 AUTOMATIZACIÓN DE WALLETS (EL TRIGGER)
+            // ---------------------------------------------
+            
+            // 1. Notificar a Apple (Ya lo tenías)
+            notifyPassUpdate(cliente._id).catch(err => console.error("❌ Error push apple:", err));
+
+            // 2. Notificar a Google (NUEVO)
+            if (cliente.hasWallet && (cliente.walletPlatform === 'google' || cliente.walletPlatform === 'both')) {
+                console.log(`🤖 Trigger: Actualizando Google Wallet para ${cliente.nombre}...`);
+                notifyGoogleWalletUpdate(cliente._id).catch(err => console.error("❌ Error push google:", err));
+            }
+            // ---------------------------------------------
 
             responsePayload.walletLinks = {
                 apple: `${BASE_URL}/api/wallet/apple/${cliente._id}`,
@@ -262,7 +275,15 @@ router.delete('/:id', async (req, res) => {
                     totalPedidos: (cliente.totalPedidos || 0) - 1
                 }
             });
-            notifyPassUpdate(cliente._id).catch(err => console.error("❌ Error push wallet delete:", err));
+            
+            // Notificar reversión a Apple
+            notifyPassUpdate(cliente._id).catch(err => console.error("❌ Error push apple delete:", err));
+
+            // Notificar reversión a Google (NUEVO)
+            if (cliente.hasWallet && (cliente.walletPlatform === 'google' || cliente.walletPlatform === 'both')) {
+                console.log(`🤖 Trigger Delete: Actualizando Google Wallet para ${cliente.nombre}...`);
+                notifyGoogleWalletUpdate(cliente._id).catch(err => console.error("❌ Error push google delete:", err));
+            }
         }
 
         await Pedido.findByIdAndDelete(req.params.id);
@@ -297,7 +318,6 @@ router.get('/cliente/:telefono', async (req, res) => {
 // ==========================================
 
 // GET /api/pedidos (TODOS o FILTRADOS POR FECHA)
-// Esta ruta maneja tanto la carga inicial como el filtro del PDF
 router.get('/', async (req, res) => {
     try {
         const { fecha, limit } = req.query;
@@ -311,9 +331,7 @@ router.get('/', async (req, res) => {
 
         // 2. Si hay FECHA (para el PDF), filtramos aquí en el servidor
         if (fecha) {
-            // Usamos regex para buscar la cadena de fecha sin importar mayúsculas
             query.fecha = { $regex: fecha.trim(), $options: 'i' };
-            // Si buscamos por fecha, quitamos el límite para que salgan todos los de ese día
             delete options.limit; 
         }
 
@@ -360,7 +378,6 @@ router.get('/semanaPasada', async (req, res) => {
 });
 
 // RUTA DE BÚSQUEDA ESPECÍFICA (LEGACY O ALIAS)
-// Mantenemos esta por si tu frontend antiguo la usa, pero hace lo mismo que la ruta '/' con query param
 router.get('/buscar-fecha', async (req, res) => {
     try {
         const fechaBusqueda = req.query.fecha;

@@ -4,7 +4,7 @@ const GoogleWalletObject = require('../models/GoogleWalletObject');
 const Clientes = require('../models/Clientes');
 const MarketingCampaign = require('../models/MarketingCampaign'); 
 
-// Función de espera (Delay) para darle tiempo a Google
+// Función de espera (Delay) para darle tiempo a Google a procesar
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Cargar credenciales
@@ -52,7 +52,8 @@ async function getGoogleAccessToken() {
     return authResponse.data.access_token;
 }
 
-async function updateGoogleWalletObject(clientId) {
+// 👇 MODIFICADO: Acepta 'customData' para enviar mensajes manuales
+async function updateGoogleWalletObject(clientId, customData = null) {
     if (!SERVICE_ACCOUNT) return;
 
     try {
@@ -66,16 +67,25 @@ async function updateGoogleWalletObject(clientId) {
         }
         if (!walletObject) return;
 
-        // Datos Campaña
+        // --- LÓGICA DE MENSAJE (Campaña Automática vs Manual) ---
         let promoTitle = "Novedades Fresh Market";
         let promoMessage = "🥕 ¡Sigue acumulando tus sellos!";
-        try {
-            const lastCampaign = await MarketingCampaign.findOne().sort({ sentAt: -1 });
-            if (lastCampaign) {
-                promoTitle = lastCampaign.title || promoTitle;
-                promoMessage = lastCampaign.message || promoMessage;
-            }
-        } catch (e) {}
+        
+        // A) Si nos mandan datos manuales (desde la Interfaz), usamos eso
+        if (customData && customData.title && customData.message) {
+            promoTitle = customData.title;
+            promoMessage = customData.message;
+        } 
+        // B) Si no, buscamos la última campaña en la base de datos
+        else {
+            try {
+                const lastCampaign = await MarketingCampaign.findOne().sort({ sentAt: -1 });
+                if (lastCampaign) {
+                    promoTitle = lastCampaign.title || promoTitle;
+                    promoMessage = lastCampaign.message || promoMessage;
+                }
+            } catch (e) {}
+        }
 
         // Datos Visuales
         let numSellos = cliente.sellos || 0;
@@ -91,8 +101,8 @@ async function updateGoogleWalletObject(clientId) {
 
         const accessToken = await getGoogleAccessToken();
 
-        // 👇 1. PREPARAMOS EL TEXTO DE LA PORTADA (Truco LeDuo)
-        const textoPortada = stamps >= 8 
+        // 👇 LÓGICA DE PORTADA (LeDuo Style)
+        const textoPortada = numSellos >= 8 
             ? "🎁 ¡Premio disponible!" 
             : `${sellosVisuales}/8 sellos • $${(cliente.puntos || 0).toFixed(0)} pts`;
 
@@ -102,9 +112,7 @@ async function updateGoogleWalletObject(clientId) {
         const patchBody = {
             classId: selectedClassId,
             state: 'ACTIVE',
-            accountName: textoPortada,
-            
-
+            accountName: textoPortada, // Aquí va el texto dinámico de portada
             loyaltyPoints: {
                 label: 'Puntos',
                 balance: { string: `$${(cliente.puntos || 0).toFixed(2)}` }
@@ -114,12 +122,10 @@ async function updateGoogleWalletObject(clientId) {
                 balance: { string: `${sellosVisuales} de 8` }
             },
             heroImage: { sourceUri: { uri: heroImageUrl } },
-            
             textModulesData: [
-                // 👇 Movemos el nombre del cliente aquí para que no se pierda
                 {
-                    header: "Titular de la cuenta",
-                    body: nombreLimpio, 
+                    header: "Titular",
+                    body: nombreLimpio, // Nombre del cliente movido aquí
                     id: "account_holder"
                 },
                 {
@@ -138,7 +144,7 @@ async function updateGoogleWalletObject(clientId) {
             { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
         );
 
-        console.log(`🧹 Pase actualizado (estilo LeDuo) y limpiado para ${clientId}`);
+        console.log(`🧹 Pase actualizado y limpiado para ${clientId}`);
 
         // ---------------------------------------------------------
         // ⏳ PASO INTERMEDIO: ESPERA (CRUCIAL)
@@ -158,7 +164,7 @@ async function updateGoogleWalletObject(clientId) {
                 messageType: "TEXT_AND_NOTIFY", // 🔔 Forzar notificación
                 displayInterval: {
                     start: { date: new Date().toISOString() },
-                    end: { date: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString() } // 3 días
+                    end: { date: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString() } // 3 días vigencia
                 }
             }
         };
@@ -189,9 +195,10 @@ async function updateGoogleWalletObject(clientId) {
     }
 }
 
-async function notifyGoogleWalletUpdate(clientId) {
+// 👇 MODIFICADO: Exporta la función aceptando los dos parámetros
+async function notifyGoogleWalletUpdate(clientId, customData = null) {
     try {
-        await updateGoogleWalletObject(clientId);
+        await updateGoogleWalletObject(clientId, customData);
     } catch (err) {
         console.error('❌ Error fatal en notifyGoogleWalletUpdate:', err);
     }
