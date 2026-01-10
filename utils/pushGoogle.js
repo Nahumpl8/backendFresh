@@ -65,7 +65,10 @@ async function updateGoogleWalletObject(clientId, customData = null) {
             const constructedId = `${GOOGLE_ISSUER_ID}.${cliente._id}`;
             walletObject = await GoogleWalletObject.findOne({ objectId: constructedId });
         }
-        if (!walletObject) return;
+        if (!walletObject) {
+            console.warn(`⚠️ GoogleWalletObject no encontrado para cliente ${clientId}. No se realizará el PATCH.`);
+            return false;
+        }
 
         // --- LÓGICA DE MENSAJE (Campaña Automática vs Manual) ---
         let promoTitle = "Novedades Fresh Market";
@@ -189,18 +192,22 @@ async function updateGoogleWalletObject(clientId, customData = null) {
             { _id: walletObject._id },
             { classId: selectedClassId, version: walletObject.version + 1, updatedAt: new Date() }
         );
+        return true;
 
     } catch (err) {
         console.error(`❌ Error Critical Google API (${clientId}):`, err.response?.data?.error || err.message);
+        return false;
     }
 }
 
 // 👇 MODIFICADO: Exporta la función aceptando los dos parámetros
 async function notifyGoogleWalletUpdate(clientId, customData = null) {
     try {
-        await updateGoogleWalletObject(clientId, customData);
+        const ok = await updateGoogleWalletObject(clientId, customData);
+        return ok;
     } catch (err) {
         console.error('❌ Error fatal en notifyGoogleWalletUpdate:', err);
+        return false;
     }
 }
 

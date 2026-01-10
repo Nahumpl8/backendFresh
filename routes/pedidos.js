@@ -210,10 +210,15 @@ router.post('/new', async (req, res) => {
             // 1. Notificar a Apple (Ya lo tenías)
             notifyPassUpdate(cliente._id).catch(err => console.error("❌ Error push apple:", err));
 
-            // 2. Notificar a Google (NUEVO)
+            // 2. Notificar a Google (NUEVO) — await para capturar resultado
             if (cliente.hasWallet && (cliente.walletPlatform === 'google' || cliente.walletPlatform === 'both')) {
                 console.log(`🤖 Trigger: Actualizando Google Wallet para ${cliente.nombre}...`);
-                notifyGoogleWalletUpdate(cliente._id).catch(err => console.error("❌ Error push google:", err));
+                try {
+                    const ok = await notifyGoogleWalletUpdate(cliente._id);
+                    if (!ok) console.warn(`⚠️ notifyGoogleWalletUpdate devolvió false para cliente ${cliente._id}`);
+                } catch (err) {
+                    console.error("❌ Error push google:", err);
+                }
             }
             // ---------------------------------------------
 
@@ -279,10 +284,15 @@ router.delete('/:id', async (req, res) => {
             // Notificar reversión a Apple
             notifyPassUpdate(cliente._id).catch(err => console.error("❌ Error push apple delete:", err));
 
-            // Notificar reversión a Google (NUEVO)
+            // Notificar reversión a Google (NUEVO) — await para capturar resultado
             if (cliente.hasWallet && (cliente.walletPlatform === 'google' || cliente.walletPlatform === 'both')) {
                 console.log(`🤖 Trigger Delete: Actualizando Google Wallet para ${cliente.nombre}...`);
-                notifyGoogleWalletUpdate(cliente._id).catch(err => console.error("❌ Error push google delete:", err));
+                try {
+                    const ok = await notifyGoogleWalletUpdate(cliente._id);
+                    if (!ok) console.warn(`⚠️ notifyGoogleWalletUpdate (delete) devolvió false para cliente ${cliente._id}`);
+                } catch (err) {
+                    console.error("❌ Error push google delete:", err);
+                }
             }
         }
 
