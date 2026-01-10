@@ -2,10 +2,14 @@ const router = require('express').Router();
 const WalletDevice = require('../models/WalletDevice');
 const Clientes = require('../models/Clientes');
 const MarketingCampaign = require('../models/MarketingCampaign');
+// 👇 AGREGADO: Faltaba importar esto para guardar el pase en la BD
+const GoogleWalletObject = require('../models/GoogleWalletObject'); 
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { PKPass } = require('passkit-generator');
+// 👇 AGREGADO: Faltaba importar esto para firmar el pase de Google
+const jwt = require('jsonwebtoken'); 
 
 // SECRETOS
 const WALLET_SECRET = process.env.WALLET_SECRET || 'fresh-market-secret-key-2025';
@@ -21,6 +25,7 @@ const CLASS_LEGEND = `${GOOGLE_ISSUER_ID}.fresh_market_legend`;
 let SERVICE_ACCOUNT = null;
 try {
     if (process.env.GOOGLE_KEY_JSON) {
+        // En Railway tomará esto
         SERVICE_ACCOUNT = JSON.parse(process.env.GOOGLE_KEY_JSON);
     } else {
         const keyPath = path.join(__dirname, '../keys.json');
@@ -93,7 +98,6 @@ router.get('/v1/devices/:deviceId/registrations/:passTypeId', async (req, res) =
 
 // ==========================================
 // ⚡️ FUNCIÓN GENERADORA DEL PASE APPLE
-// (Usada tanto por la App Wallet como por el botón Web)
 // ==========================================
 async function generateApplePass(clientId, res, isDownload = false) {
     const cliente = await Clientes.findById(clientId);
@@ -134,7 +138,6 @@ async function generateApplePass(clientId, res, isDownload = false) {
     } else if (totalGastado >= 5000) {
         nivelNombre = 'Nivel Plata';
         nivelEmoji = '🥈';
-        // CORRECCIÓN: Apple no soporta rgba, cambiamos a rgb
         appleBackgroundColor = "rgb(169, 169, 169)"; 
         appleLabelColor = "rgb(240, 240, 240)";
     }
@@ -162,7 +165,6 @@ async function generateApplePass(clientId, res, isDownload = false) {
         'strip@2x.png': fs.readFileSync(finalStripPath)
     };
 
-    // TU JSON ORIGINAL SE MANTIENE
     const passJson = {
         formatVersion: 1,
         passTypeIdentifier: "pass.com.freshmarket.pachuca",
@@ -223,7 +225,7 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
     } catch (err) { res.status(500).send("Error generando pase"); }
 });
 
-// 4. 📥 DESCARGA DIRECTA (Endpoint para Botón Web/Mac)
+// 4. 📥 DESCARGA DIRECTA
 router.get('/download/apple/:clientId', async (req, res) => {
     try {
         let { clientId } = req.params;
@@ -235,7 +237,9 @@ router.get('/download/apple/:clientId', async (req, res) => {
 // 5. 🤖 GOOGLE WALLET ENDPOINT
 router.get('/google/:clientId', async (req, res) => {
     try {
-        if (!SERVICE_ACCOUNT) return res.status(500).send("No credentials");
+        // Validación extra por si acaso
+        if (!SERVICE_ACCOUNT) return res.status(500).send("No credentials configured");
+
         let { clientId } = req.params;
         clientId = cleanObjectId(clientId);
         const cliente = await Clientes.findById(clientId);
@@ -285,11 +289,17 @@ router.get('/google/:clientId', async (req, res) => {
                 }]
             }
         };
+        
+        // FIRMA DEL TOKEN (Esto fallaba porque faltaba importar jwt)
         const token = jwt.sign(payload, SERVICE_ACCOUNT.private_key, { algorithm: 'RS256' });
         const saveUrl = `https://pay.google.com/gp/v/save/${token}`;
+        
         await Clientes.findByIdAndUpdate(clientId, { hasWallet: true, walletPlatform: 'google' });
         res.redirect(saveUrl);
-    } catch (err) { console.error("❌ GOOGLE ERROR:", err); res.status(500).send('Error Google'); }
+    } catch (err) { 
+        console.error("❌ GOOGLE ERROR:", err); 
+        res.status(500).send(`Error Google: ${err.message}`); 
+    }
 });
 
 // 6. BAJA
@@ -302,7 +312,7 @@ router.delete('/v1/devices/:deviceId/registrations/:passTypeId/:serialNumber', a
     } catch (err) { res.sendStatus(500); }
 });
 
-// 7. REDIRECTOR INTELIGENTE (/go)
+// 7. REDIRECTOR INTELIGENTE
 router.get('/go/:clientId', async (req, res) => {
     try {
         const { clientId } = req.params;
@@ -310,7 +320,6 @@ router.get('/go/:clientId', async (req, res) => {
         const userAgent = req.headers['user-agent'] || '';
         const isIOS = /iPad|iPhone|iPod/.test(userAgent) && !window.MSStream;
         if (isIOS) {
-            // Redirige al endpoint interno de pase
             res.redirect(`${WEB_SERVICE_URL}/v1/passes/pass.com.freshmarket.pachuca/FRESH-${cleanId}`);
         } else {
             res.redirect(`${WEB_SERVICE_URL}/google/${cleanId}`);
