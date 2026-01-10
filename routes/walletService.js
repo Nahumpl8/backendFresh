@@ -2,16 +2,21 @@ const router = require('express').Router();
 const WalletDevice = require('../models/WalletDevice');
 const Clientes = require('../models/Clientes');
 const MarketingCampaign = require('../models/MarketingCampaign');
-// 👇 AGREGADO: Faltaba importar esto para guardar el pase en la BD
-const GoogleWalletObject = require('../models/GoogleWalletObject'); 
+// 👇 1. IMPORTACIÓN AGREGADA: Modelo para guardar referencia de Google
+const GoogleWalletObject = require('../models/GoogleWalletObject');
+
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { PKPass } = require('passkit-generator');
-// 👇 AGREGADO: Faltaba importar esto para firmar el pase de Google
-const jwt = require('jsonwebtoken'); 
 
-// SECRETOS
+// 👇 2. IMPORTACIONES AGREGADAS: Para firma JWT y notificaciones Apple
+const jwt = require('jsonwebtoken');
+const apn = require('apn');
+
+const { notifyGoogleWalletUpdate } = require('../utils/pushGoogle');
+
+// SECRETOS Y CONFIGURACIÓN
 const WALLET_SECRET = process.env.WALLET_SECRET || 'fresh-market-secret-key-2025';
 const BASE_URL = process.env.BASE_URL || 'https://backendfresh-production.up.railway.app';
 const WEB_SERVICE_URL = `${BASE_URL}/api/wallet`;
@@ -43,12 +48,12 @@ function formatSmartName(fullName) {
     const words = cleanName.split(' ');
     if (words.length <= 2) return cleanName;
     const connectors = ['de', 'del', 'la', 'las', 'los', 'y', 'san', 'santa', 'van', 'von'];
-    let resultName = words[0]; 
+    let resultName = words[0];
     let i = 1;
-    while(i < words.length) {
+    while (i < words.length) {
         const word = words[i];
         resultName += " " + word;
-        if (!connectors.includes(word.toLowerCase())) break; 
+        if (!connectors.includes(word.toLowerCase())) break;
         i++;
     }
     return resultName;
@@ -67,6 +72,10 @@ function cleanObjectId(id) {
     return id.trim().replace(/[^a-fA-F0-9]/g, "");
 }
 
+// ==========================================
+// RUTAS APPLE (REGISTRO, LOG, ETC)
+// ==========================================
+
 // 1. REGISTRO (APPLE)
 router.post('/v1/devices/:deviceId/registrations/:passTypeId/:serialNumber', async (req, res) => {
     try {
@@ -82,7 +91,7 @@ router.post('/v1/devices/:deviceId/registrations/:passTypeId/:serialNumber', asy
         const clientId = serialNumber.replace('FRESH-', '');
         await Clientes.findByIdAndUpdate(clientId, { hasWallet: true, walletPlatform: 'apple' });
         res.sendStatus(201);
-    } catch (err) { res.sendStatus(500); }
+    } catch (err) { console.error(err); res.sendStatus(500); }
 });
 
 // 2. CONSULTA (APPLE)
@@ -90,10 +99,10 @@ router.get('/v1/devices/:deviceId/registrations/:passTypeId', async (req, res) =
     try {
         const { deviceId, passTypeId } = req.params;
         const registrations = await WalletDevice.find({ deviceLibraryIdentifier: deviceId, passTypeIdentifier: passTypeId });
-        if (registrations.length === 0) return res.sendStatus(204); 
+        if (registrations.length === 0) return res.sendStatus(204);
         const serials = registrations.map(reg => reg.serialNumber);
         res.json({ lastUpdated: new Date().toISOString(), serialNumbers: serials });
-    } catch (err) { res.sendStatus(500); }
+    } catch (err) { console.error(err); res.sendStatus(500); }
 });
 
 // ==========================================
@@ -112,7 +121,7 @@ async function generateApplePass(clientId, res, isDownload = false) {
             promoTitle = "📢 " + (lastCampaign.title || "NOVEDADES");
             promoMessage = lastCampaign.message;
         }
-    } catch (e) {}
+    } catch (e) { }
 
     const baseDir = path.resolve(__dirname, '../assets/freshmarket');
     const certsDir = path.resolve(__dirname, '../certs');
@@ -126,19 +135,19 @@ async function generateApplePass(clientId, res, isDownload = false) {
     const totalGastado = cliente.totalGastado || 0;
     let nivelNombre = 'Nivel Bronce';
     let nivelEmoji = '🥉';
-    
+
     let appleBackgroundColor = "rgb(34, 139, 34)"; // Verde
     let appleLabelColor = "rgb(200, 255, 200)";
 
-    if (totalGastado >= 15000) { 
+    if (totalGastado >= 15000) {
         nivelNombre = 'Nivel Oro';
         nivelEmoji = '🏆';
-        appleBackgroundColor = "rgb(218, 165, 32)"; 
+        appleBackgroundColor = "rgb(218, 165, 32)";
         appleLabelColor = "rgb(255, 250, 200)";
     } else if (totalGastado >= 5000) {
         nivelNombre = 'Nivel Plata';
         nivelEmoji = '🥈';
-        appleBackgroundColor = "rgb(169, 169, 169)"; 
+        appleBackgroundColor = "rgb(169, 169, 169)";
         appleLabelColor = "rgb(240, 240, 240)";
     }
 
@@ -225,7 +234,7 @@ router.get('/v1/passes/:passTypeId/:serialNumber', async (req, res) => {
     } catch (err) { res.status(500).send("Error generando pase"); }
 });
 
-// 4. 📥 DESCARGA DIRECTA
+// 4. 📥 DESCARGA DIRECTA (APPLE)
 router.get('/download/apple/:clientId', async (req, res) => {
     try {
         let { clientId } = req.params;
@@ -237,22 +246,29 @@ router.get('/download/apple/:clientId', async (req, res) => {
 // 5. 🤖 GOOGLE WALLET ENDPOINT
 router.get('/google/:clientId', async (req, res) => {
     try {
-        // Validación extra por si acaso
-        if (!SERVICE_ACCOUNT) return res.status(500).send("No credentials configured");
+        // Validación de credenciales
+        if (!SERVICE_ACCOUNT) return res.status(500).send("No credentials configured (SERVICE_ACCOUNT missing)");
 
         let { clientId } = req.params;
         clientId = cleanObjectId(clientId);
         const cliente = await Clientes.findById(clientId);
         if (!cliente) return res.status(404).send("Cliente no encontrado");
 
-        // Niveles Google
+        // --- LÓGICA DE NIVELES GOOGLE ---
         const totalGastado = cliente.totalGastado || 0;
         let nivelNombre = 'Nivel Bronce';
         let nivelEmoji = '🥉';
         let selectedClassId = CLASS_NORMAL;
 
-        if (totalGastado >= 15000) { nivelNombre = 'Nivel Oro'; nivelEmoji = '🏆'; selectedClassId = CLASS_LEGEND; }
-        else if (totalGastado >= 5000) { nivelNombre = 'Nivel Plata'; nivelEmoji = '🥈'; selectedClassId = CLASS_NORMAL; }
+        if (totalGastado >= 15000) {
+            nivelNombre = 'Nivel Oro';
+            nivelEmoji = '🏆';
+            selectedClassId = CLASS_LEGEND;
+        } else if (totalGastado >= 5000) {
+            nivelNombre = 'Nivel Plata';
+            nivelEmoji = '🥈';
+            selectedClassId = CLASS_NORMAL;
+        }
 
         let numSellos = cliente.sellos || 0;
         const sellosVisuales = (numSellos > 0 && numSellos % 8 === 0) ? 8 : numSellos % 8;
@@ -262,43 +278,90 @@ router.get('/google/:clientId', async (req, res) => {
         const objectId = `${GOOGLE_ISSUER_ID}.${cliente._id}`;
         const nombreLimpio = formatSmartName(cliente.nombre);
 
+        // 👇 TRUCO VISUAL (LeDuo Style) para la portada
+        // Esto asegura que desde que lo bajan se vea "3/8 sellos" y no el nombre
+        const textoPortada = numSellos >= 8
+            ? "🎁 ¡Premio disponible!"
+            : `${sellosVisuales}/8 sellos • $${(cliente.puntos || 0).toFixed(0)} pts`;
+
+        // --- GESTIÓN DE VERSIÓN Y BD ---
         let walletObject = await GoogleWalletObject.findOne({ objectId });
         let version = 1;
+
         if (walletObject) {
             version = walletObject.version + 1;
             if (walletObject.classId !== selectedClassId) {
                 await GoogleWalletObject.updateOne({ objectId }, { classId: selectedClassId, version, updatedAt: new Date() });
-            } else { await GoogleWalletObject.updateOne({ objectId }, { version, updatedAt: new Date() }); }
+            } else {
+                await GoogleWalletObject.updateOne({ objectId }, { version, updatedAt: new Date() });
+            }
         } else {
             walletObject = await GoogleWalletObject.create({ objectId, clienteId: cliente._id, classId: selectedClassId, version: 1 });
         }
 
+        // --- CONSTRUCCIÓN DEL JWT PAYLOAD ---
         const payload = {
-            iss: SERVICE_ACCOUNT.client_email, aud: 'google', typ: 'savetowallet', iat: Math.floor(Date.now() / 1000), origins: [],
+            iss: SERVICE_ACCOUNT.client_email,
+            aud: 'google',
+            typ: 'savetowallet',
+            iat: Math.floor(Date.now() / 1000),
+            origins: [],
             payload: {
                 loyaltyObjects: [{
-                    id: objectId, classId: selectedClassId, state: 'ACTIVE', accountId: cliente.telefono, version: version,
-                    barcode: { type: 'QR_CODE', value: cliente._id.toString(), alternateText: "Fidelify.mx" },
-                    accountName: nombreLimpio,
-                    loyaltyPoints: { label: 'Puntos', balance: { string: (cliente.puntos || 0).toString() } },
-                    secondaryLoyaltyPoints: { label: 'Mis Sellos', balance: { string: `${sellosVisuales} de 8` } },
+                    id: objectId,
+                    classId: selectedClassId,
+                    state: 'ACTIVE',
+                    accountId: cliente._id,
+                    version: version,
+                    // 👇 1. IMPORTANTE: Activar notificaciones desde el inicio
+                    notifyPreference: "notifyOnUpdate",
+                    barcode: {
+                        type: 'QR_CODE',
+                        value: cliente._id.toString(),
+                        alternateText: "Fidelify.mx"
+                    },
+                    // 👇 2. IMPORTANTE: Usar el texto dinámico en la portada
+                    accountName: textoPortada,
+                    loyaltyPoints: {
+                        label: 'Puntos',
+                        balance: { string: (cliente.puntos || 0).toString() }
+                    },
+                    secondaryLoyaltyPoints: {
+                        label: 'Mis Sellos',
+                        balance: { string: `${sellosVisuales} de 8` }
+                    },
                     accountHolderName: `${nivelEmoji} ${nivelNombre}`,
-                    heroImage: { sourceUri: { uri: heroImageUrl } },
-                    linksModuleData: { uris: [{ kind: "i18n.WALLET_URI_PHONE", uri: "tel:7712346620", description: "Llamar" }, { kind: "i18n.WALLET_URI_WEB", uri: "https://wa.me/527712346620", description: "WhatsApp" }] },
-                    textModulesData: [{ header: "Estatus VIP", body: `${nivelNombre} (Gasto: $${totalGastado.toLocaleString('es-MX')})`, id: "status_module" }, { header: "Novedades", body: "🥕 ¡Sigue acumulando!", id: "news_module" }]
+                    heroImage: {
+                        sourceUri: { uri: heroImageUrl }
+                    },
+                    linksModuleData: {
+                        uris: [
+                            { kind: "i18n.WALLET_URI_PHONE", uri: "tel:7712346620", description: "Llamar" },
+                            { kind: "i18n.WALLET_URI_WEB", uri: "https://wa.me/527712346620", description: "WhatsApp" }
+                        ]
+                    },
+                    textModulesData: [
+                        // 👇 3. IMPORTANTE: Mover el nombre real aquí
+                        { header: "Titular", body: nombreLimpio, id: "account_holder" },
+                        { header: 'Nivel actual', body: `${nivelNombre}`, id: "status_module" },
+                        { header: "Novedades", body: "🥕 ¡Sigue acumulando!", id: "news_module" }
+                    ]
                 }]
             }
         };
-        
-        // FIRMA DEL TOKEN (Esto fallaba porque faltaba importar jwt)
+
+        // --- FIRMA DEL TOKEN ---
         const token = jwt.sign(payload, SERVICE_ACCOUNT.private_key, { algorithm: 'RS256' });
         const saveUrl = `https://pay.google.com/gp/v/save/${token}`;
-        
+
         await Clientes.findByIdAndUpdate(clientId, { hasWallet: true, walletPlatform: 'google' });
+
+        // Redirigir a Google Pay
         res.redirect(saveUrl);
-    } catch (err) { 
-        console.error("❌ GOOGLE ERROR:", err); 
-        res.status(500).send(`Error Google: ${err.message}`); 
+
+    } catch (err) {
+        console.error("❌ GOOGLE ERROR:", err);
+        res.status(500).send(`Error Google: ${err.message}`);
     }
 });
 
@@ -309,7 +372,7 @@ router.delete('/v1/devices/:deviceId/registrations/:passTypeId/:serialNumber', a
         if (!validateAuthToken(req.headers.authorization, serialNumber)) return res.sendStatus(401);
         await WalletDevice.findOneAndDelete({ deviceLibraryIdentifier: deviceId, serialNumber: serialNumber });
         res.sendStatus(200);
-    } catch (err) { res.sendStatus(500); }
+    } catch (err) { console.error(err); res.sendStatus(500); }
 });
 
 // 7. REDIRECTOR INTELIGENTE
@@ -318,13 +381,143 @@ router.get('/go/:clientId', async (req, res) => {
         const { clientId } = req.params;
         const cleanId = cleanObjectId(clientId);
         const userAgent = req.headers['user-agent'] || '';
-        const isIOS = /iPad|iPhone|iPod/.test(userAgent) && !window.MSStream;
+
+        // CORRECCIÓN: Quitamos !window.MSStream porque 'window' no existe en Node.js
+        const isIOS = /iPad|iPhone|iPod/.test(userAgent);
+
         if (isIOS) {
             res.redirect(`${WEB_SERVICE_URL}/v1/passes/pass.com.freshmarket.pachuca/FRESH-${cleanId}`);
         } else {
             res.redirect(`${WEB_SERVICE_URL}/google/${cleanId}`);
         }
     } catch (err) { res.status(500).send("Error redirigiendo"); }
+});
+
+// ==========================================
+// 🚀 8. NOTIFICACIONES PUSH MASIVAS (Apple + Google Update)
+// ==========================================
+router.post('/notify-bulk', async (req, res) => {
+    const { clientIds } = req.body;
+
+    if (!clientIds || clientIds.length === 0) {
+        return res.json({ summary: { success: 0, failed: 0 } });
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+
+    // Configuración APN (Apple)
+    let apnProvider;
+    try {
+        const certPath = path.join(__dirname, '../certs/signerCert.pem');
+        const keyPath = path.join(__dirname, '../certs/signerKey.pem');
+        if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+            apnProvider = new apn.Provider({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath), production: true });
+        }
+    } catch (e) { console.error("⚠️ Error APN:", e.message); }
+
+    for (const clientId of clientIds) {
+        try {
+            const cliente = await Clientes.findById(clientId);
+            if (!cliente || !cliente.hasWallet) continue;
+
+            // --- LÓGICA APPLE 🍏 (Igual que antes) ---
+            if (cliente.walletPlatform === 'apple' || cliente.walletPlatform === 'both') {
+                const devices = await WalletDevice.find({ serialNumber: `FRESH-${cliente._id}` });
+                if (devices.length > 0 && apnProvider) {
+                    const notification = new apn.Notification();
+                    notification.payload = {};
+                    for (const device of devices) {
+                        try {
+                            await apnProvider.send(notification, device.pushToken);
+                            successCount++;
+                        } catch (err) { console.error(`Error Apple:`, err); }
+                    }
+                }
+            }
+
+            // --- LÓGICA GOOGLE 🤖 (TOTALMENTE NUEVA Y REAL) ---
+            if (cliente.walletPlatform === 'google' || cliente.walletPlatform === 'both') {
+                try {
+                    // 👇 2. CORREGIDO: Llamamos a tu script que hace la magia (PATCH + SLEEP + ADD MESSAGE)
+                    // Antes solo guardabas en DB, por eso no llegaban.
+                    console.log(`🤖 Iniciando notificación Google para ${clientId}...`);
+
+                    await notifyGoogleWalletUpdate(clientId);
+
+                    successCount++;
+                } catch (err) {
+                    console.error("Error notificando Google:", err);
+                    failCount++;
+                }
+            }
+
+        } catch (error) {
+            failCount++;
+            console.error(`Error notificando cliente ${clientId}:`, error);
+        }
+    }
+
+    if (apnProvider) apnProvider.shutdown();
+
+    res.json({
+        success: true,
+        summary: {
+            success: successCount,
+            failed: failCount,
+            total: clientIds.length
+        }
+    });
+});
+
+// ==========================================
+// 🕵️‍♂️ 9. AUDITORÍA DE WALLETS
+// ==========================================
+router.get('/debug/audit', async (req, res) => {
+    try {
+        const appleDevices = await WalletDevice.find({});
+        const uniqueAppleClients = new Set(appleDevices.map(d => d.serialNumber));
+        const googleObjects = await GoogleWalletObject.find({});
+
+        const clientsWithFlag = await Clientes.find({
+            $or: [
+                { hasWallet: true },
+                { walletPlatform: { $in: ['apple', 'google', 'both'] } }
+            ]
+        });
+
+        const totalRealWalletIds = [];
+        appleDevices.forEach(d => {
+            const id = d.serialNumber.replace('FRESH-', '');
+            totalRealWalletIds.push(id);
+        });
+        googleObjects.forEach(g => {
+            if (g.clienteId) totalRealWalletIds.push(g.clienteId.toString());
+        });
+
+        const notFlagged = await Clientes.find({
+            _id: { $in: totalRealWalletIds },
+            hasWallet: { $ne: true }
+        });
+
+        res.json({
+            resumen: {
+                real_apple_devices: appleDevices.length,
+                real_unique_apple_users: uniqueAppleClients.size,
+                real_google_users: googleObjects.length,
+                total_real_wallets: uniqueAppleClients.size + googleObjects.length,
+                clients_table_flagged: clientsWithFlag.length,
+                DESINCRONIZADOS: {
+                    mensaje: "Usuarios que tienen wallet en BD pero no aparecen en la lista de clientes",
+                    cantidad: notFlagged.length,
+                    nombres: notFlagged.map(c => c.nombre)
+                }
+            }
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 module.exports = router;

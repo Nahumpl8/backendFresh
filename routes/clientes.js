@@ -171,6 +171,30 @@ router.put('/canjear/:telefono', async (req, res) => {
 });
 
 // ====================================================================
+// 📢 OBTENER AUDIENCIA DE WALLET (SIN PAGINACIÓN)
+// ====================================================================
+router.get('/audience', async (req, res) => {
+    try {
+        // Buscamos TODOS los clientes que tengan la bandera hasWallet
+        // O que tengan una plataforma asignada (apple, google, both)
+        const audience = await Clientes.find({
+            $or: [
+                { hasWallet: true },
+                { walletPlatform: { $in: ['apple', 'google', 'both'] } }
+            ]
+        })
+        .select('nombre telefono hasWallet walletPlatform sellos puntos updatedAt') // Solo datos necesarios
+        .sort({ updatedAt: -1 });
+
+        console.log(`📢 Audiencia encontrada: ${audience.length} clientes`);
+        res.json(audience);
+    } catch (err) {
+        console.error("Error obteniendo audiencia:", err);
+        res.status(500).json({ error: 'Error obteniendo audiencia' });
+    }
+});
+
+// =================================== GET =================================
 // 🚀 OBTENER CLIENTES (VERSIÓN HÍBRIDA / AUTO-REPARABLE)
 // ====================================================================
 // ====================================================================
