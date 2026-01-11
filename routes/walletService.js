@@ -282,8 +282,21 @@ router.get('/google/:clientId', async (req, res) => {
         const objectId = `${GOOGLE_ISSUER_ID}.${cliente._id}`;
         const nombreLimpio = formatSmartName(cliente.nombre);
 
+        // 👇 CAMBIO 1: CONSULTAR CAMPAÑA (Igual que en Apple)
+        let promoTitle = "Novedades";
+        let promoMessage = "🥕 ¡Sigue acumulando puntos y sellos!";
+        try {
+            // Traemos la última campaña PÚBLICA (no test)
+            const lastCampaign = await MarketingCampaign.findOne({ isTest: { $ne: true } }).sort({ sentAt: -1 });
+            if (lastCampaign) {
+                promoTitle = lastCampaign.title || "Novedades";
+                promoMessage = lastCampaign.message || promoMessage;
+            }
+        } catch (e) {
+            console.error("Error buscando campaña Google:", e.message);
+        }
+
         // 👇 TRUCO VISUAL (LeDuo Style) para la portada
-        // Esto asegura que desde que lo bajan se vea "3/8 sellos" y no el nombre
         const textoPortada = numSellos >= 8
             ? "🎁 ¡Premio disponible!"
             : `${sellosVisuales}/8 sellos • ${(cliente.puntos || 0).toFixed(0)} pts`;
@@ -303,6 +316,8 @@ router.get('/google/:clientId', async (req, res) => {
             walletObject = await GoogleWalletObject.create({ objectId, clienteId: cliente._id, classId: selectedClassId, version: 1 });
         }
 
+        const shortId = cliente._id.toString().slice(-8).toUpperCase();
+
         // --- CONSTRUCCIÓN DEL JWT PAYLOAD ---
         const payload = {
             iss: SERVICE_ACCOUNT.client_email,
@@ -315,7 +330,7 @@ router.get('/google/:clientId', async (req, res) => {
                     id: objectId,
                     classId: selectedClassId,
                     state: 'ACTIVE',
-                    accountId: cliente._id,
+                    accountId: shortId,
                     version: version,
                     // 👇 1. IMPORTANTE: Activar notificaciones desde el inicio
                     notifyPreference: "notifyOnUpdate",
@@ -345,10 +360,10 @@ router.get('/google/:clientId', async (req, res) => {
                         ]
                     },
                     textModulesData: [
-                        // 👇 3. IMPORTANTE: Mover el nombre real aquí
                         { header: "Titular", body: nombreLimpio, id: "account_holder" },
                         { header: 'Nivel actual', body: `${nivelNombre}`, id: "status_module" },
-                        { header: "Novedades", body: "🥕 ¡Sigue acumulando puntos y sellos!", id: "news_module" }
+                        // 👇 CAMBIO 2: USAR VARIABLES DINÁMICAS
+                        { header: promoTitle, body: promoMessage, id: "news_module" }
                     ]
                 }]
             }
@@ -401,7 +416,7 @@ router.get('/go/:clientId', async (req, res) => {
 // 🚀 8. NOTIFICACIONES PUSH MASIVAS (Apple + Google Update)
 // ==========================================
 router.post('/notify-bulk', async (req, res) => {
-    const { clientIds } = req.body;
+    const { clientIds, title, message } = req.body;
 
     if (!clientIds || clientIds.length === 0) {
         return res.json({ summary: { success: 0, failed: 0 } });
