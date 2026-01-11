@@ -165,6 +165,8 @@ async function generateApplePass(clientId, res, isDownload = false) {
     const stripFilename = `${sellosVisuales}-sello.png`;
     const stripPath = path.join(nivelesDir, stripFilename);
     const finalStripPath = fs.existsSync(stripPath) ? stripPath : path.join(nivelesDir, '0-sello.png');
+    const shortId = cliente._id.toString().slice(-8).toUpperCase();
+
 
     const authToken = crypto.createHmac('sha256', WALLET_SECRET).update(cliente._id.toString()).digest('hex');
     const nombreLimpio = formatSmartName(cliente.nombre);
@@ -192,7 +194,7 @@ async function generateApplePass(clientId, res, isDownload = false) {
         webServiceURL: WEB_SERVICE_URL,
         authenticationToken: authToken,
         userInfo: { generatedAt: new Date().toISOString(), forceUpdate: Math.random().toString() },
-        locations: [{ latitude: 20.0979892, longitude: -98.7709978, relevantText: "🥕 No olvides hacer tu pedido Fresh Market esta semana. 👋" }],
+        locations: [{ latitude: 20.0979892, longitude: -98.7709978, relevantText: "🥕 No olvides hacer tu pedido de despensa Fresh Market esta semana. 👋" }],
         storeCard: {
             headerFields: [
                 { key: "header_puntos", label: "Puntos", value: `${numPuntos} pts`, textAlignment: "PKTextAlignmentRight", changeMessage: "Tus puntos cambiaron a %@" }
@@ -205,11 +207,26 @@ async function generateApplePass(clientId, res, isDownload = false) {
                 { key: "status", label: "ESTATUS", value: statusText, textAlignment: "PKTextAlignmentCenter" }
             ],
             backFields: [
-                { key: "marketing_promo", label: promoTitle, value: promoMessage, textAlignment: "PKTextAlignmentLeft", changeMessage: "%@" },
-                { key: "account_info", label: "👤 TITULAR", value: `${nombreLimpio}`, textAlignment: "PKTextAlignmentRight" },
+                { key: "marketing_promo", 
+                    label: promoTitle, 
+                    value: promoMessage, 
+                    textAlignment: "PKTextAlignmentLeft", 
+                    changeMessage: "%@" 
+                },
+                { key: "account_info", 
+                    label: "👤 TITULAR", 
+                    value: `${nombreLimpio}\nID: ${shortId}`, 
+                    textAlignment: "PKTextAlignmentRight" 
+                },
                 { key: "quick_links", label: "📱 CONTACTO RÁPIDO", value: "WhatsApp: 7712346620", textAlignment: "PKTextAlignmentLeft" },
                 { key: 'redes_sociales', label: '🌐 SÍGUENOS', value: 'Instagram: https://www.instagram.com/fresh_marketp\nFacebook: https://www.facebook.com/freshmarketp\nWhatsApp: https://wa.me/7712346620', textAlignment: "PKTextAlignmentLeft" },
-                { key: "how_it_works", label: "🙌 TU TARJETA FRESH", value: "🥕 Recibe por semana 1 sello por compras mayores a $285.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de $100!\n💰 Tus puntos valen dinero electrónico.", textAlignment: "PKTextAlignmentLeft" },
+                { key: "how_it_works", label: "🙌 TU TARJETA FRESH", value: "🥕 Recibe por semana 1 sello por compras mayores a $285.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de hasta $100!\n💰 Tus puntos valen dinero electrónico (no son canjeables por efectivo).", textAlignment: "PKTextAlignmentLeft" },
+                { 
+                    key: "do_your_order", 
+                    label: "⭐️HAZ TU PEDIDO", 
+                    value: "Haz tu pedido vía WhatsApp con el siguiente link:\nhttps://wa.me/527712346620 🚚 \n o entra a nuestro sitio web:\nhttps://freshmarket.mx 📦",
+                    textAlignment: "PKTextAlignmentLeft" 
+                },
                 { key: "last_update", label: "⏰ Última Actualización", value: new Date().toLocaleString('es-MX', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }), textAlignment: "PKTextAlignmentRight" }
             ]
         },
@@ -513,7 +530,7 @@ router.get('/test-push/:clientId', async (req, res) => {
             customData = { title, message };
             // 🔥 TRUCO APPLE
             if (cliente.walletPlatform === 'apple' || cliente.walletPlatform === 'both') {
-                 await MarketingCampaign.create({
+                await MarketingCampaign.create({
                     title: title,
                     message: message,
                     sentAt: new Date(),
