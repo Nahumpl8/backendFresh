@@ -484,11 +484,11 @@ router.get('/lite', async (req, res) => {
 router.get('/inactivos-semana', async (req, res) => {
     try {
         const fechasSemana = [
-            'miércoles, 7 Enero 2026',
-            'jueves, 8 Enero 2026',
-            'viernes, 9 Enero 2026',
-            'sábado, 10 Enero 2026',
-            'domingo, 11 Enero 2026',
+            'miércoles, 14 Enero 2026',
+            'jueves, 15 Enero 2026',
+            'viernes, 16 Enero 2026',
+            'sábado, 17 Enero 2026',
+            'domingo, 18 Enero 2026',
         ];
         const pedidosSemana = await Pedido.find({ fecha: { $in: fechasSemana } });
         const telefonosActivos = pedidosSemana.map(p => p.telefono);
