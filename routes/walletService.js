@@ -218,9 +218,17 @@ async function generateApplePass(clientId, res, isDownload = false) {
                     value: `${nombreLimpio}\nID: ${shortId}`, 
                     textAlignment: "PKTextAlignmentRight" 
                 },
-                { key: "quick_links", label: "📱 CONTACTO RÁPIDO", value: "WhatsApp: 7712346620", textAlignment: "PKTextAlignmentLeft" },
-                { key: 'redes_sociales', label: '🌐 SÍGUENOS', value: 'Instagram: https://www.instagram.com/fresh_marketp\nFacebook: https://www.facebook.com/freshmarketp\nWhatsApp: https://wa.me/7712346620', textAlignment: "PKTextAlignmentLeft" },
-                { key: "how_it_works", label: "🙌 TU TARJETA FRESH", value: "🥕 Recibe por semana 1 sello por compras mayores a $285.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de hasta $100!\n💰 Tus puntos valen dinero electrónico (no son canjeables por efectivo).", textAlignment: "PKTextAlignmentLeft" },
+                { key: "quick_links", 
+                    label: "📱 CONTACTO RÁPIDO", 
+                    value: "WhatsApp: 7712346620", 
+                    textAlignment: "PKTextAlignmentLeft" 
+                },
+                { key: 'redes_sociales', 
+                    label: '🌐 SÍGUENOS', 
+                    value: 'Instagram: https://www.instagram.com/fresh_marketp\nFacebook: https://www.facebook.com/freshmarketp\nWhatsApp: https://wa.me/7712346620', textAlignment: "PKTextAlignmentLeft" 
+                },
+                { key: "how_it_works", 
+                    label: "🙌 TU TARJETA FRESH", value: "🥕 Recibe por semana 1 sello por compras mayores a $285.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de hasta $80!\n💰 Tus puntos valen dinero electrónico (no son canjeables por efectivo).", textAlignment: "PKTextAlignmentLeft" },
                 { 
                     key: "do_your_order", 
                     label: "⭐️HAZ TU PEDIDO", 
@@ -380,7 +388,13 @@ router.get('/google/:clientId', async (req, res) => {
                         { header: "Titular", body: nombreLimpio, id: "account_holder" },
                         { header: 'Nivel actual', body: `${nivelNombre}`, id: "status_module" },
                         // 👇 CAMBIO 2: USAR VARIABLES DINÁMICAS
-                        { header: promoTitle, body: promoMessage, id: "news_module" }
+                        { header: promoTitle, body: promoMessage, id: "news_module" },
+                        {
+                            header: "Tu Tarjeta Fresh",
+                            body: "🥕 Recibe por semana 1 sello por compras mayores a $285.\n🎉 Al juntar 8 sellos, ¡recibe un producto con valor de hasta $80!\n💰 Tus puntos valen dinero electrónico (no son canjeables por efectivo).",
+                            id: "how_it_works"
+                        },
+                        
                     ]
                 }]
             }
