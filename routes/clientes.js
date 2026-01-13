@@ -3,6 +3,7 @@ const Clientes = require('../models/Clientes');
 const { verifyToken } = require('./verifyToken');
 const Pedido = require('../models/Pedidos');
 const WalletDevice = require('../models/WalletDevice');
+const { sendWelcomeEmail } = require('../utils/emailService');
 
 // Utilidad para limpiar teléfono
 function limpiarTelefono(tel) {
@@ -95,7 +96,25 @@ router.delete('/:id', async (req, res) => {
 // Editar cliente
 router.put('/edit/:id', async (req, res) => {
     try {
+        // Obtener cliente antes de actualizar para verificar email anterior
+        const clienteAnterior = await Clientes.findById(req.params.id);
+        
+        if (!clienteAnterior) {
+            return res.status(404).json({ error: 'Cliente no encontrado' });
+        }
+
+        const emailAnterior = clienteAnterior.email;
+        const nuevoEmail = req.body.email ? req.body.email.toLowerCase().trim() : null;
+
+        // Actualizar cliente
         const updatedClientes = await Clientes.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
+        
+        // Enviar correo de bienvenida si es la primera vez que se agrega el email
+        if (nuevoEmail && !emailAnterior && updatedClientes.email) {
+            sendWelcomeEmail(updatedClientes.email, updatedClientes.nombre, updatedClientes._id.toString())
+                .catch(err => console.error('Error enviando correo de bienvenida:', err));
+        }
+
         res.status(200).json(updatedClientes);
     } catch (err) {
         console.error(err);
