@@ -15,6 +15,39 @@ function normalizarTexto(texto) {
     return texto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 }
 
+// 1. HELPER PARA GENERAR CÓDIGOS DE SEMANA (Pon esto antes de las rutas)
+function getWeekStrings(weeksBack) {
+    const current = new Date();
+    // Ajuste para obtener el número de semana ISO
+    const target = new Date(current.valueOf());
+    const dayNr = (current.getDay() + 6) % 7;
+    target.setDate(target.getDate() - dayNr + 3);
+    const firstThursday = target.valueOf();
+    target.setMonth(0, 1);
+    if (target.getDay() !== 4) {
+        target.setMonth(0, 1 + ((4 - target.getDay()) + 7) % 7);
+    }
+    const currentWeekNumber = 1 + Math.ceil((firstThursday - target) / 604800000);
+    const currentYear = current.getFullYear();
+
+    let weeks = [];
+
+    // Generamos las semanas hacia atrás
+    for (let i = 0; i <= weeksBack; i++) {
+        let w = currentWeekNumber - i;
+        let y = currentYear;
+
+        // Manejo del cambio de año (si retrocedemos de la semana 1 a la 52)
+        while (w <= 0) {
+            y--;
+            w += 52; // Aproximación estándar, suficiente para Fresh Market
+        }
+
+        weeks.push(`${y}-${w}`); // Formato "2026-2"
+    }
+    return weeks;
+}
+
 router.get('/audience', async (req, res) => {
     try {
         console.log("🔍 Buscando audiencia..."); // Log para debug en Railway
@@ -24,8 +57,8 @@ router.get('/audience', async (req, res) => {
                 { walletPlatform: { $in: ['apple', 'google', 'both'] } }
             ]
         })
-        .select('nombre telefono hasWallet walletPlatform sellos puntos updatedAt')
-        .sort({ updatedAt: -1 });
+            .select('nombre telefono hasWallet walletPlatform sellos puntos updatedAt')
+            .sort({ updatedAt: -1 });
 
         console.log(`📢 Audiencia encontrada: ${audience.length} clientes`);
         res.json(audience);
@@ -98,7 +131,7 @@ router.put('/edit/:id', async (req, res) => {
     try {
         // Obtener cliente antes de actualizar para verificar email anterior
         const clienteAnterior = await Clientes.findById(req.params.id);
-        
+
         if (!clienteAnterior) {
             return res.status(404).json({ error: 'Cliente no encontrado' });
         }
@@ -108,7 +141,7 @@ router.put('/edit/:id', async (req, res) => {
 
         // Actualizar cliente
         const updatedClientes = await Clientes.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
-        
+
         // Enviar correo de bienvenida si es la primera vez que se agrega el email
         if (nuevoEmail && !emailAnterior && updatedClientes.email) {
             sendWelcomeEmail(updatedClientes.email, updatedClientes.nombre, updatedClientes._id.toString())
@@ -236,18 +269,29 @@ router.get('/', async (req, res) => {
             queryObj.$or = [{ nombre: regex }, { telefono: regex }];
         }
 
-        // --- B. Filtro de Tiempo (updatedAt: Actividad reciente) ---
         if (time && time !== 'all') {
-            const now = new Date();
-            let dateLimit = new Date();
+            let weeksToInclude = [];
+
+            // Definimos cuántas semanas atrás queremos ver
             switch (time) {
-                case '1week': dateLimit.setDate(now.getDate() - 7); break;
-                case '1month': dateLimit.setMonth(now.getMonth() - 1); break;
-                case '3months': dateLimit.setMonth(now.getMonth() - 3); break;
-                case '6months': dateLimit.setMonth(now.getMonth() - 6); break;
-                case '1year': dateLimit.setFullYear(now.getFullYear() - 1); break;
+                case '1week': // Esta semana
+                    weeksToInclude = getWeekStrings(0);
+                    break;
+                case '1month': // Últimas 4 semanas
+                    weeksToInclude = getWeekStrings(4);
+                    break;
+                case '3months': // Últimas 12 semanas
+                    weeksToInclude = getWeekStrings(12);
+                    break;
+                case '6months': // Últimas 24 semanas
+                    weeksToInclude = getWeekStrings(24);
+                    break;
             }
-            queryObj.updatedAt = { $gte: dateLimit };
+
+            // Usamos $in para buscar coincidencias exactas en el array de semanas
+            if (weeksToInclude.length > 0) {
+                queryObj.ultimaSemanaRegistrada = { $in: weeksToInclude };
+            }
         }
 
         // --- C. Filtro de Gasto ---
