@@ -50,26 +50,34 @@ function getWeekStrings(weeksBack) {
 
 async function verificarRegaloDigital(cliente) {
     try {
-        // 1. Verificar si cumple requisitos (Tiene Email Y Tiene Wallet)
-        // Nota: walletPlatform !== 'none' cubre apple, google o both
+        // 1. Requisitos
         const tieneWallet = cliente.hasWallet || (cliente.walletPlatform && cliente.walletPlatform !== 'none');
         const tieneEmail = cliente.email && cliente.email.includes('@');
 
         if (tieneEmail && tieneWallet) {
-            // 2. Verificar si YA tiene este premio para no duplicar
-            const yaTienePremio = cliente.premiosPendientes && cliente.premiosPendientes.some(p => p.type === 'regalo_wallet');
+
+            // 2. Verificar duplicados (Tenemos que parsear para leer porque ahora guardaremos strings)
+            const yaTienePremio = cliente.premiosPendientes && cliente.premiosPendientes.some(p => {
+                // Si es string lo parseamos, si es objeto lo leemos directo
+                const premio = typeof p === 'string' ? JSON.parse(p) : p;
+                return premio.type === 'regalo_wallet';
+            });
 
             if (!yaTienePremio) {
                 console.log(`🎁 ¡Premio Digital desbloqueado para: ${cliente.nombre}!`);
 
-                // 3. Inyectar el premio en la lista existente
-                cliente.premiosPendientes.push({
+                // 3. Inyectar el premio COMO TEXTO (JSON STRING)
+                // 👇👇👇 AQUÍ ESTÁ EL CAMBIO CLAVE 👇👇👇
+                const nuevoPremio = {
                     label: '250g Jamón/Queso (Regalo Digital)',
                     type: 'regalo_wallet',
                     value: 0,
                     expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), // 60 días
                     redeemed: false
-                });
+                };
+
+                // Usamos JSON.stringify porque tu Schema define esto como [String]
+                cliente.premiosPendientes.push(JSON.stringify(nuevoPremio));
 
                 await cliente.save();
                 return true;
@@ -175,9 +183,7 @@ router.delete('/:id', async (req, res) => {
 // Editar cliente
 router.put('/edit/:id', async (req, res) => {
     try {
-        // Obtener cliente antes de actualizar para verificar email anterior
         const clienteAnterior = await Clientes.findById(req.params.id);
-
         if (!clienteAnterior) {
             return res.status(404).json({ error: 'Cliente no encontrado' });
         }
@@ -185,22 +191,31 @@ router.put('/edit/:id', async (req, res) => {
         const emailAnterior = clienteAnterior.email;
         const nuevoEmail = req.body.email ? req.body.email.toLowerCase().trim() : null;
 
-        // Actualizar cliente
-        const updatedClientes = await Clientes.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
+        // 👇 CAMBIO IMPORTANTE: Usar 'let' en lugar de 'const'
+        let updatedClientes = await Clientes.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
 
-        // Enviar correo de bienvenida si es la primera vez que se agrega el email
+        // Enviar correo de bienvenida (Solo si es un correo NUEVO)
         if (nuevoEmail && !emailAnterior && updatedClientes.email) {
             sendWelcomeEmail(updatedClientes.email, updatedClientes.nombre, updatedClientes._id.toString())
                 .catch(err => console.error('Error enviando correo de bienvenida:', err));
         }
 
+        // 👇 AGREGAR: Si quieres forzar el envío aunque ya tenga correo (solo para pruebas o correcciones)
+        // Puedes agregar un flag en el body, por ejemplo: req.body.forceEmail
+        if (req.body.forceEmail && updatedClientes.email) {
+            sendWelcomeEmail(updatedClientes.email, updatedClientes.nombre, updatedClientes._id.toString())
+                .catch(err => console.error('Error enviando correo forzado:', err));
+        }
+
+        // Verificar Regalo Digital
         await verificarRegaloDigital(updatedClientes);
-        // Volvemos a consultar para que el frontend reciba el premio recién creado en el array
+
+        // Recargar datos para devolver el premio actualizado
         updatedClientes = await Clientes.findById(req.params.id);
 
         res.status(200).json(updatedClientes);
     } catch (err) {
-        console.error(err);
+        console.error(err); // Ahora verás el error en la consola si falla algo más
         res.status(500).json(err);
     }
 });
@@ -373,7 +388,7 @@ router.get('/', async (req, res) => {
         // 3. EJECUTAR CONSULTA (Count + Find)
         const totalItems = await Clientes.countDocuments(queryObj);
 
-        const campos = 'nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet walletPlatform misDirecciones ultimaSemanaRegistrada premiosPendientes createdAt updatedAt totalGastado totalPedidos';
+        const campos = 'nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet walletPlatform misDirecciones ultimaSemanaRegistrada premiosPendientes createdAt updatedAt totalGastado totalPedidos email';
 
         const clientes = await Clientes.find(queryObj)
             .select(campos)
@@ -538,7 +553,7 @@ router.get('/search', async (req, res) => {
                 { telefonoSecundario: regex }
             ]
         })
-            .select('nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet walletPlatform misDirecciones ultimaSemanaRegistrada premiosPendientes')
+            .select('nombre direccion telefono telefonoSecundario gpsLink puntos sellos hasWallet walletPlatform misDirecciones ultimaSemanaRegistrada premiosPendientes email')
             .limit(20)
             .lean();
 
