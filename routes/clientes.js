@@ -195,7 +195,8 @@ router.put('/edit/:id', async (req, res) => {
         let updatedClientes = await Clientes.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
 
         // Enviar correo de bienvenida (Solo si es un correo NUEVO)
-        if (nuevoEmail && !emailAnterior && updatedClientes.email) {
+        if (req.body.email && updatedClientes.email) {
+            console.log("📧 Disparando bienvenida (Admin guardó email)...");
             sendWelcomeEmail(updatedClientes.email, updatedClientes.nombre, updatedClientes._id.toString())
                 .catch(err => console.error('Error enviando correo de bienvenida:', err));
         }

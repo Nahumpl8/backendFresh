@@ -17,7 +17,7 @@ const transporter = nodemailer.createTransport({
 // Ej: "Hola {{nombre}}, tienes {{puntos}} puntos. Te faltan {{20-sellos}} para el premio."
 const procesarTextoDinamico = (texto, cliente) => {
     if (!texto) return '';
-    
+
     return texto.replace(/{{(.*?)}}/g, (match, contenido) => {
         const key = contenido.trim(); // Quita espacios
 
@@ -43,12 +43,64 @@ const procesarTextoDinamico = (texto, cliente) => {
 };
 
 // --- FUNCIÓN DE BIENVENIDA (LA DEJAMOS IGUAL, FUNCIONA BIEN) ---
+// utils/emailService.js
+
+// ... (tus imports y transporter arriba siguen igual) ...
+
 const sendWelcomeEmail = async (email, nombre, clienteId) => {
-    // ... (Tu código de bienvenida existente, no hace falta cambiarlo si ya te gusta)
-    // Para ahorrar espacio en la respuesta, asumo que dejas tu función sendWelcomeEmail aquí.
-    // Si la necesitas completa avísame.
-    return true; 
+    try {
+        const appleLink = `https://backendfresh-production.up.railway.app/api/wallet/download/apple/${clienteId}`;
+        const googleLink = `https://backendfresh-production.up.railway.app/api/wallet/download/google/${clienteId}`;
+
+        const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <body style="font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px;">
+            <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 10px; overflow: hidden;">
+                <div style="background-color: #15803d; padding: 20px; text-align: center; color: white;">
+                    <h1>¡Bienvenido a Fresh Market! 🥕</h1>
+                </div>
+                <div style="padding: 20px; color: #333;">
+                    <p>Hola <strong>${nombre}</strong>,</p>
+                    <p>Tu cuenta ha sido activada correctamente. Ahora eres parte de nuestra comunidad.</p>
+                    
+                    <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                        <h3 style="margin-top: 0; color: #166534;">🎁 Descarga tu Tarjeta Digital</h3>
+                        <p style="font-size: 14px;">Acumula puntos, sellos y gana premios en cada compra.</p>
+                        
+                        <div style="text-align: center; margin-top: 15px;">
+                            <a href="${appleLink}" style="display: inline-block; background-color: #000; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px;">
+                                 Apple Wallet
+                            </a>
+                            <a href="${googleLink}" style="display: inline-block; background-color: #3b82f6; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px;">
+                                🤖 Google Wallet
+                            </a>
+                        </div>
+                    </div>
+
+                    <p>Esperamos tu primer pedido pronto.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
+
+        await transporter.sendMail({
+            from: '"Fresh Market" <pedidos@freshmarket.mx>',
+            to: email,
+            subject: 'Bienvenido a Fresh Market - Descarga tu Wallet (si aún no lo has hecho) 📱',
+            html: htmlContent
+        });
+
+        console.log(`✅ Correo de bienvenida enviado a ${email}`);
+        return true;
+    } catch (error) {
+        console.error("Error enviando bienvenida:", error);
+        return false;
+    }
 };
+
+// ... (el resto de tu archivo con sendSmartEmail sigue igual) ...
 
 
 // --- 🔥 LA NUEVA JOYA: SEND SMART EMAIL ---
@@ -65,16 +117,16 @@ const sendSmartEmail = async (clienteData, asunto, mensajeBase, opciones = {}) =
         const mensajeHTML = mensajePersonalizado.replace(/\n/g, '<br />'); // Saltos de línea
 
         // 2. CONSTRUCCIÓN DE BLOQUES HTML
-        
+
         // A. Banner Principal
-        const bannerBlock = opciones.bannerUrl 
+        const bannerBlock = opciones.bannerUrl
             ? `<div style="margin-bottom: 25px; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
                  <img src="${opciones.bannerUrl}" style="width: 100%; max-width: 600px; height: auto; display: block;" alt="Promo" />
-               </div>` 
+               </div>`
             : '';
 
         // B. Botón Principal (CTA)
-        const botonBlock = opciones.ctaLink 
+        const botonBlock = opciones.ctaLink
             ? `<div style="text-align: center; margin: 30px 0;">
                  <a href="${opciones.ctaLink}" style="display: inline-block; background-color: #15803d; color: white; padding: 14px 28px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 16px; box-shadow: 0 4px 10px rgba(21, 128, 61, 0.3);">
                     ${opciones.ctaText || 'Ver Más 🥕'}
