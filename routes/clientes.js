@@ -48,6 +48,40 @@ function getWeekStrings(weeksBack) {
     return weeks;
 }
 
+async function verificarRegaloDigital(cliente) {
+    try {
+        // 1. Verificar si cumple requisitos (Tiene Email Y Tiene Wallet)
+        // Nota: walletPlatform !== 'none' cubre apple, google o both
+        const tieneWallet = cliente.hasWallet || (cliente.walletPlatform && cliente.walletPlatform !== 'none');
+        const tieneEmail = cliente.email && cliente.email.includes('@');
+
+        if (tieneEmail && tieneWallet) {
+            // 2. Verificar si YA tiene este premio para no duplicar
+            const yaTienePremio = cliente.premiosPendientes && cliente.premiosPendientes.some(p => p.type === 'regalo_wallet');
+
+            if (!yaTienePremio) {
+                console.log(`🎁 ¡Premio Digital desbloqueado para: ${cliente.nombre}!`);
+
+                // 3. Inyectar el premio en la lista existente
+                cliente.premiosPendientes.push({
+                    label: '250g Jamón/Queso (Regalo Digital)',
+                    type: 'regalo_wallet',
+                    value: 0,
+                    expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), // 60 días
+                    redeemed: false
+                });
+
+                await cliente.save();
+                return true;
+            }
+        }
+        return false;
+    } catch (error) {
+        console.error("Error verificando regalo:", error);
+        return false;
+    }
+}
+
 router.get('/audience', async (req, res) => {
     try {
         console.log("🔍 Buscando audiencia..."); // Log para debug en Railway
@@ -70,9 +104,21 @@ router.get('/audience', async (req, res) => {
 
 // Crear nuevo cliente
 router.post('/new', async (req, res) => {
+    // Normalizamos email si viene
+    if (req.body.email) req.body.email = req.body.email.toLowerCase().trim();
+
     const newClientes = new Clientes(req.body);
     try {
         const savedClientes = await newClientes.save();
+
+        // 👇 AGREGAR ESTO: Enviar correo si se registró con email
+        if (savedClientes.email) {
+            console.log("📧 Enviando bienvenida a usuario nuevo...");
+            sendWelcomeEmail(savedClientes.email, savedClientes.nombre, savedClientes._id.toString())
+                .catch(err => console.error('Error welcome email (new):', err));
+        }
+        // 👆 FIN DE LO AGREGADO
+
         res.status(201).json(savedClientes);
     } catch (err) {
         console.error(err);
@@ -147,6 +193,10 @@ router.put('/edit/:id', async (req, res) => {
             sendWelcomeEmail(updatedClientes.email, updatedClientes.nombre, updatedClientes._id.toString())
                 .catch(err => console.error('Error enviando correo de bienvenida:', err));
         }
+
+        await verificarRegaloDigital(updatedClientes);
+        // Volvemos a consultar para que el frontend reciba el premio recién creado en el array
+        updatedClientes = await Clientes.findById(req.params.id);
 
         res.status(200).json(updatedClientes);
     } catch (err) {
@@ -242,13 +292,6 @@ router.put('/canjear/:telefono', async (req, res) => {
     }
 });
 
-
-// =================================== GET =================================
-// 🚀 OBTENER CLIENTES (VERSIÓN HÍBRIDA / AUTO-REPARABLE)
-// ====================================================================
-// ====================================================================
-// 🚀 OBTENER CLIENTES (CON FILTROS AVANZADOS + WALLET FIX)
-// ====================================================================
 // ====================================================================
 // 🚀 OBTENER CLIENTES (FILTROS + WALLET + SIN PEDIDO RECIENTE)
 // ====================================================================
@@ -433,6 +476,19 @@ router.get('/sync-wallets', async (req, res) => {
                 log.push(`🤖 Google set (${platform}): ${cleanId}`);
             }
         }
+
+        // 3. BARRIDO DE PREMIOS (Dar regalo a quienes ya completaron todo)
+        const candidatos = await Clientes.find({
+            hasWallet: true,
+            email: { $ne: null }
+        });
+
+        let premiosNuevos = 0;
+        for (const c of candidatos) {
+            const gano = await verificarRegaloDigital(c);
+            if (gano) premiosNuevos++;
+        }
+        log.push(`🎁 Premios inyectados en esta sincro: ${premiosNuevos}`);
 
         res.json({ message: "Sincronización terminada", log });
     } catch (err) {
