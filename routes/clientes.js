@@ -582,7 +582,7 @@ router.get('/stats', async (req, res) => {
 router.get('/filtered', async (req, res) => {
     try {
         const { filter = 'todos' } = req.query;
-        const allClientes = await Clientes.find().select('_id nombre telefono');
+        const allClientes = await Clientes.find().select('_id nombre telefono email');
 
         if (filter === 'todos') {
             const clientesConUltimoPedido = await Promise.all(
@@ -596,6 +596,7 @@ router.get('/filtered', async (req, res) => {
                         _id: cliente._id,
                         nombre: cliente.nombre,
                         telefono: cliente.telefono,
+                        email: cliente.email,
                         ultimoPedido: ultimoPedido?.createdAt || null
                     };
                 })

@@ -30,6 +30,7 @@ const vendedoresRoute = require('./routes/vendedores');
 
 // 🟢 Aquí unificamos todo: Apple + Google + Redirecciones en un solo servicio
 const walletServiceRoute = require('./routes/walletService'); 
+const emailMarketingRoute = require('./routes/emailMarketing');
 
 // --- CONEXIÓN A MONGODB ---
 mongoose.connect(process.env.MONGO_URL)
@@ -53,9 +54,9 @@ app.use('/api/roulette', rouletteRoutes);
 app.use('/api/clientes-auth', clientesAuthRoute);
 app.use('/api/marketing', marketingRoute);
 app.use('/api/vendedores', vendedoresRoute);
-
-// 🟢 Ruta Única para Wallet
 app.use('/api/wallet', walletServiceRoute);
+app.use('/api/marketing', emailMarketingRoute);
+
 
 // --- SERVIDOR ---
 app.listen(process.env.PORT || 3000, () => {
