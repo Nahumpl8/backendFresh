@@ -372,7 +372,7 @@ router.get('/google/:clientId', async (req, res) => {
                     },
                     secondaryLoyaltyPoints: {
                         label: 'Haz tu pedido en:',
-                        balance: { string: 'WhatsApp: 7712346620 o entra https://www.freshmarket.mx' }
+                        balance: { string: 'WhatsApp: 7712346620 o freshmarket.mx' }
                     },
                     accountHolderName: `${nivelEmoji} ${nivelNombre}`,
                     heroImage: {
