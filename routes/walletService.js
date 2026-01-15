@@ -367,12 +367,12 @@ router.get('/google/:clientId', async (req, res) => {
                     // 👇 2. IMPORTANTE: Usar el texto dinámico en la portada
                     accountName: textoPortada,
                     loyaltyPoints: {
-                        label: 'Puntos',
-                        balance: { string: (cliente.puntos || 0).toString() }
+                        label: 'Puntos y sellos',
+                        balance: { string: `${(cliente.puntos || 0).toFixed(0)} pts • ${sellosVisuales}/8 sellos` }
                     },
                     secondaryLoyaltyPoints: {
-                        label: 'Mis Sellos',
-                        balance: { string: `${sellosVisuales} de 8` }
+                        label: 'Haz tu pedido en:',
+                        balance: { string: 'WhatsApp: 7712346620 o entra https://www.freshmarket.mx' }
                     },
                     accountHolderName: `${nivelEmoji} ${nivelNombre}`,
                     heroImage: {
@@ -381,7 +381,8 @@ router.get('/google/:clientId', async (req, res) => {
                     linksModuleData: {
                         uris: [
                             { kind: "i18n.WALLET_URI_PHONE", uri: "tel:7712346620", description: "Llamar" },
-                            { kind: "i18n.WALLET_URI_WEB", uri: "https://wa.me/527712346620", description: "WhatsApp" }
+                            { kind: "i18n.WALLET_URI_WEB", uri: "https://wa.me/527712346620", description: "WhatsApp" },
+                            { kind: "i18n.WALLET_URI_WEB", uri: "https://www.freshmarket.mx", description: "Sitio Web" }
                         ]
                     },
                     textModulesData: [

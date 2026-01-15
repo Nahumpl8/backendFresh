@@ -52,6 +52,8 @@ const sendWelcomeEmail = async (email, nombre, clienteId) => {
         const appleLink = `https://backendfresh-production.up.railway.app/api/wallet/download/apple/${clienteId}`;
         const googleLink = `https://backendfresh-production.up.railway.app/api/wallet/download/google/${clienteId}`;
 
+        const nombreLimpio = String(nombre || 'Cliente').split('-')[0].trim();
+
         const htmlContent = `
         <!DOCTYPE html>
         <html>
@@ -61,7 +63,7 @@ const sendWelcomeEmail = async (email, nombre, clienteId) => {
                     <h1>¡Bienvenido a Fresh Market! 🥕</h1>
                 </div>
                 <div style="padding: 20px; color: #333;">
-                    <p>Hola <strong>${nombre}</strong>,</p>
+                    <p style="font-size: 18px;">Hola <strong>${nombreLimpio}</strong>,</p>
                     <p>Tu cuenta ha sido activada correctamente. Ahora eres parte de nuestra comunidad.</p>
                     
                     <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 15px; border-radius: 8px; margin: 20px 0;">
