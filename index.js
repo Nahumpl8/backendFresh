@@ -31,6 +31,7 @@ const vendedoresRoute = require('./routes/vendedores');
 // 🟢 Aquí unificamos todo: Apple + Google + Redirecciones en un solo servicio
 const walletServiceRoute = require('./routes/walletService'); 
 const emailMarketingRoute = require('./routes/emailMarketing');
+const inventarioStockRoute = require('./routes/inventarioStock');
 
 // --- CONEXIÓN A MONGODB ---
 mongoose.connect(process.env.MONGO_URL)
@@ -56,6 +57,7 @@ app.use('/api/marketing', marketingRoute);
 app.use('/api/vendedores', vendedoresRoute);
 app.use('/api/wallet', walletServiceRoute);
 app.use('/api/marketing', emailMarketingRoute);
+app.use('/api/inventario-stock', inventarioStockRoute);
 
 
 // --- SERVIDOR ---

@@ -42,6 +42,76 @@ function esSemanaAnterior(anterior, actual) {
 }
 
 // ==========================================
+// 📊 DASHBOARD: Pedidos por rango de fechas
+// ==========================================
+router.get('/stats/rango', async (req, res) => {
+    try {
+        const { desde, hasta } = req.query;
+        if (!desde || !hasta) {
+            return res.status(400).json({ error: 'Se requieren parámetros desde y hasta (YYYY-MM-DD)' });
+        }
+        const fechaDesde = new Date(desde);
+        fechaDesde.setHours(0, 0, 0, 0);
+        const fechaHasta = new Date(hasta);
+        fechaHasta.setHours(23, 59, 59, 999);
+
+        const pedidos = await Pedido.find({
+            createdAt: { $gte: fechaDesde, $lte: fechaHasta }
+        }).sort({ createdAt: -1 });
+
+        res.json(pedidos);
+    } catch (err) {
+        console.error('Error en /stats/rango:', err);
+        res.status(500).json(err);
+    }
+});
+
+// ==========================================
+// 📊 DASHBOARD: Resumen semanal (para gráfica)
+// ==========================================
+router.get('/stats/semanal', async (req, res) => {
+    try {
+        const semanas = parseInt(req.query.semanas) || 8;
+        const resultado = [];
+
+        for (let i = semanas - 1; i >= 0; i--) {
+            const now = new Date();
+            // Calcular lunes de la semana i semanas atrás
+            const dayOfWeek = now.getDay() || 7; // Domingo = 7
+            const lunes = new Date(now);
+            lunes.setDate(now.getDate() - dayOfWeek + 1 - (i * 7));
+            lunes.setHours(0, 0, 0, 0);
+
+            const domingo = new Date(lunes);
+            domingo.setDate(lunes.getDate() + 6);
+            domingo.setHours(23, 59, 59, 999);
+
+            const pedidos = await Pedido.find({
+                createdAt: { $gte: lunes, $lte: domingo }
+            });
+
+            const totalVentas = pedidos.reduce((acc, p) => acc + (p.total || 0), 0);
+            const totalPedidos = pedidos.length;
+
+            // Formato de nombre: "24 Feb - 2 Mar"
+            const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+            const nombre = `${lunes.getDate()} ${meses[lunes.getMonth()]} - ${domingo.getDate()} ${meses[domingo.getMonth()]}`;
+
+            resultado.push({
+                name: nombre,
+                total: totalVentas,
+                pedidos: totalPedidos
+            });
+        }
+
+        res.json(resultado);
+    } catch (err) {
+        console.error('Error en /stats/semanal:', err);
+        res.status(500).json(err);
+    }
+});
+
+// ==========================================
 // 📊 1. REPORTE DE PROMOTORES (Analytics)
 // ==========================================
 router.get('/stats/promotores', async (req, res) => {
