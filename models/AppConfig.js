@@ -7,7 +7,8 @@ const AppConfigSchema = new mongoose.Schema({
         nombre: { type: String, required: true },
         cantidad: { type: Number, required: true },
         unidad: { type: String, required: true },
-        precio: { type: Number, default: 0 }
+        precio: { type: Number, default: 0 },
+        tier: { type: Number, default: 1 }
     }]
 }, { timestamps: true });
 
