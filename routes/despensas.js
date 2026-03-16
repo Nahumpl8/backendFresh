@@ -43,7 +43,7 @@ router.delete('/:id', async (req, res) => {
 // GET despensa by ID
 router.get('/find/:id', async (req, res) => {
     try {
-        const despensa = await Despensas.findById(req.params.id);
+        const despensa = await Despensas.findById(req.params.id).populate('products.productId');
         res.status(200).json(despensa);
     } catch (err) {
         console.error(err);
@@ -54,7 +54,7 @@ router.get('/find/:id', async (req, res) => {
 // GET ALL despensas
 router.get('/', async (req, res) => {
     try {
-        const despensas = await Despensas.find();
+        const despensas = await Despensas.find().populate('products.productId');
         res.status(200).json(despensas);
     } catch (err) {
         console.error(err);

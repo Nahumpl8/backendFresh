@@ -4,7 +4,11 @@ const DespensasSchema = new mongoose.Schema({
     name:{type: String, required:true, unique:true},
     img:{type: String, required:true},
     price:{type: Number, required:true},
-    products:{type: Array},
+    products:[{
+        productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
+        cantidad: { type: Number, required: true },
+        unidad: { type: String, required: true }
+    }],
     allowChanges:{type: Boolean, default:true},
     showInWeb:{type: Boolean, default:true}
     }, 
