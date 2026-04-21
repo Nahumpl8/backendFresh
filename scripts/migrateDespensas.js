@@ -34,7 +34,7 @@ function extractNameFromTitle(title) {
   // Remove leading PROMO/Cupón/CUPON/SEPARAR prefixes
   t = t.replace(/^(PROMO|Cupón|CUPON)\s+(de\s+)?/i, '');
   // Remove leading quantity+unit+de: "500g de ", "1 Pza de ", "1kg de ", "1 lata de "
-  t = t.replace(/^\d+(\.\d+)?\s*(g|gr|kg|pza|pzas|pieza|piezas|lt|ml|lata|latas|media|medias|penca|Paquete)\s*(de\s+\d+\w+\s+)?(de\s+)?/i, '');
+  t = t.replace(/^\d+(\.\d+)?\s*(pzas|pza|piezas|pieza|latas|lata|medias|media|gr|g|kg|lt|ml|penca|Paquete)\s*(de\s+\d+\w+\s+)?(de\s+)?/i, '');
   // Also handle "1 caja de 12Lt ..." → "..."
   t = t.replace(/^\d+\s+caja\s+de\s+\d+\w*\s+/i, '');
   // Handle "1 pza. de ..."
@@ -48,9 +48,9 @@ function extractNameFromTitle(title) {
 function normalizeDespensaName(nombre) {
   let n = (nombre || '').trim();
   // "500gr Arrachera de res" → "Arrachera de res"
-  n = n.replace(/^\d+(\.\d+)?\s*(g|gr|kg|pza|pzas|pieza|piezas|lt|ml|lata|media|medias|penca)\s+/i, '');
+  n = n.replace(/^\d+(\.\d+)?\s*(pzas|pza|piezas|pieza|latas|lata|medias|media|gr|g|kg|lt|ml|penca)\s+/i, '');
   // "1 pza Brocoli" → "Brocoli"
-  n = n.replace(/^\d+\s+(pza|pzas|pieza|piezas|media|medias)\s+/i, '');
+  n = n.replace(/^\d+\s+(pzas|pza|piezas|pieza|medias|media)\s+/i, '');
   // "1kg Milanesa" → "Milanesa"
   n = n.replace(/^\d+\s*kg\s+/i, '');
   // "2 Medias pechugas" → "pechugas"

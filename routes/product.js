@@ -1,10 +1,14 @@
 const router = require('express').Router();
 const Product = require('../models/Product');
 const { verifyToken, verifyTokenAndAuthorization } = require('./verifyToken');
+const { extractNameFromTitle } = require('../utils/extractName');
 
 //CREATE
 
 router.post('/', async (req, res) => {
+    if (req.body.title && !req.body.nombreSinUnidades) {
+        req.body.nombreSinUnidades = extractNameFromTitle(req.body.title);
+    }
     const newProduct = new Product(req.body);
 
     try {
@@ -18,6 +22,9 @@ router.post('/', async (req, res) => {
 
 //UPDATE PRODUCT
 router.put('/:id', async (req, res) => {
+    if (req.body.title) {
+        req.body.nombreSinUnidades = extractNameFromTitle(req.body.title);
+    }
 
     try {
         const updatedProduct = await Product.findByIdAndUpdate(
