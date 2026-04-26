@@ -244,4 +244,86 @@ const sendSmartEmail = async (clienteData, asunto, mensajeBase, opciones = {}) =
     }
 };
 
-module.exports = { sendWelcomeEmail, sendSmartEmail };
+// --- RECUPERACIÓN DE PIN ---
+const sendPinRecoveryEmail = async (email, nombre, codigo) => {
+    try {
+        const nombreLimpio = String(nombre || 'Cliente').split('-')[0].split(' ')[0].trim();
+
+        const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: 'Helvetica Neue', Arial, sans-serif;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                    <td style="padding: 20px 0; text-align: center;">
+                        <table role="presentation" width="100%" style="max-width: 560px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                                <td style="background-color: #15803d; padding: 24px; text-align: center; color: white;">
+                                    <h1 style="margin: 0; font-size: 22px;">🔑 Recupera tu PIN</h1>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 32px;">
+                                    <p style="font-size: 16px; color: #111827; margin: 0 0 12px 0;">Hola <strong>${nombreLimpio}</strong>,</p>
+                                    <p style="font-size: 15px; color: #4b5563; line-height: 1.6; margin: 0 0 24px 0;">
+                                        Recibimos una solicitud para restablecer el PIN de tu cuenta de Fresh Market. Usa el siguiente código para crear un PIN nuevo:
+                                    </p>
+                                    <div style="text-align: center; margin: 28px 0;">
+                                        <div style="display: inline-block; background: #f0fdf4; border: 2px dashed #16a34a; padding: 18px 32px; border-radius: 12px;">
+                                            <p style="margin: 0 0 6px 0; font-size: 11px; color: #166534; letter-spacing: 2px; font-weight: bold;">TU CÓDIGO</p>
+                                            <p style="margin: 0; font-size: 36px; font-weight: 800; color: #166534; letter-spacing: 8px; font-family: 'Courier New', monospace;">${codigo}</p>
+                                        </div>
+                                    </div>
+                                    <p style="font-size: 13px; color: #6b7280; line-height: 1.6; margin: 0 0 8px 0;">
+                                        ⏱️ Este código es válido por <strong>15 minutos</strong>.
+                                    </p>
+                                    <p style="font-size: 13px; color: #6b7280; line-height: 1.6; margin: 0;">
+                                        Si tú no solicitaste este cambio, puedes ignorar este correo. Tu PIN actual seguirá funcionando.
+                                    </p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="background-color: #f0fdf4; padding: 16px; text-align: center; border-top: 1px solid #dcfce7;">
+                                    <p style="margin: 0 0 8px 0; font-size: 13px; color: #166534;">¿Necesitas ayuda?</p>
+                                    <a href="https://wa.me/527712346620" style="display: inline-block; background-color: #25D366; color: white; padding: 8px 16px; border-radius: 20px; text-decoration: none; font-size: 13px; font-weight: bold;">
+                                        Escríbenos al WhatsApp
+                                    </a>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="background-color: #1f2937; padding: 16px; text-align: center; color: #9ca3af; font-size: 11px;">
+                                    <p style="margin: 4px 0;">Fresh Market Pachuca</p>
+                                    <p style="margin: 4px 0;">Frescura en cada producto 🥕</p>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+        </body>
+        </html>
+        `;
+
+        const textContent = `Hola ${nombreLimpio},\n\nTu código para restablecer el PIN de Fresh Market es: ${codigo}\n\nEs válido por 15 minutos. Si no solicitaste este cambio, ignora este correo.\n\nFresh Market`;
+
+        await transporter.sendMail({
+            from: '"Fresh Market" <pedidos@freshmarket.mx>',
+            to: email,
+            subject: `Tu código de recuperación: ${codigo}`,
+            text: textContent,
+            html: htmlContent
+        });
+
+        console.log(`✅ Correo de recuperación enviado a ${email}`);
+        return true;
+    } catch (error) {
+        console.error("Error enviando correo de recuperación:", error);
+        return false;
+    }
+};
+
+module.exports = { sendWelcomeEmail, sendSmartEmail, sendPinRecoveryEmail };

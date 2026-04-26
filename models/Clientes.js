@@ -17,7 +17,11 @@ const ClienteSchema = new mongoose.Schema({
         trim: true,
         sparse: true 
     },
-    pin: { type: String }, 
+    pin: { type: String },
+
+    // Recuperación de PIN
+    resetPinToken:   { type: String, default: null },
+    resetPinExpires: { type: Date,   default: null },
 
     // Direcciones Extra
     misDirecciones: [{
