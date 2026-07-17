@@ -134,6 +134,47 @@ router.post('/new', async (req, res) => {
     }
 });
 
+// Guardar email de un cliente tras el pedido (captura "recibe ofertas por email").
+// Sin PIN. Solo setea el email si el cliente NO tiene uno (no sobrescribe).
+router.post('/guardar-email', async (req, res) => {
+    try {
+        const { telefono, email } = req.body;
+        if (!telefono || !email) {
+            return res.status(400).json({ ok: false, error: 'Faltan datos' });
+        }
+        const emailLimpio = String(email).toLowerCase().trim();
+
+        // Match por sufijo de teléfono (igual que el resto de rutas)
+        const cliente = await Clientes.findOne({ telefono: { $regex: telefono + '$' } });
+        if (!cliente) {
+            return res.status(404).json({ ok: false, error: 'Cliente no encontrado' });
+        }
+
+        // No sobrescribir un email existente
+        if (cliente.email) {
+            return res.status(200).json({ ok: true, yaExistia: true });
+        }
+
+        // Evitar chocar con el índice único sparse (email ya usado por otro cliente)
+        const enUso = await Clientes.findOne({ email: emailLimpio });
+        if (enUso) {
+            return res.status(409).json({ ok: false, error: 'Ese correo ya está registrado en otra cuenta' });
+        }
+
+        cliente.email = emailLimpio;
+        await cliente.save();
+
+        // Bienvenida (fire-and-forget) para clientes que dejan su email por primera vez
+        sendWelcomeEmail(cliente.email, cliente.nombre, cliente._id.toString())
+            .catch(err => console.error('Error welcome email (guardar-email):', err));
+
+        res.status(200).json({ ok: true });
+    } catch (err) {
+        console.error("❌ Error en /guardar-email:", err);
+        res.status(500).json({ ok: false });
+    }
+});
+
 // Actualizar cliente
 router.put('/:id', async (req, res) => {
     try {

@@ -7,6 +7,7 @@ const { verifyToken, verifyTokenAndAuthorization } = require('./verifyToken');
 const notifyPassUpdate = require('../utils/pushApple');
 // 👇 IMPORTANTE: Importamos la lógica de notificación de Google
 const { notifyGoogleWalletUpdate } = require('../utils/pushGoogle');
+const { sendOrderConfirmationEmail } = require('../utils/emailService');
 
 const BASE_URL = process.env.BASE_URL || 'https://backendfresh-production.up.railway.app';
 
@@ -303,6 +304,37 @@ router.post('/new', async (req, res) => {
     } catch (err) {
         console.error("❌ Error al crear pedido:", err);
         res.status(500).json(err);
+    }
+});
+
+// ==========================================
+// 📧 CONFIRMACIÓN DE PEDIDO POR CORREO
+// Se llama UNA vez por orden (después de guardar todos los pedidos).
+// Envía la confirmación al cliente (si tiene email) + copia a pedidos@freshmarket.mx.
+// ==========================================
+router.post('/confirmacion', async (req, res) => {
+    try {
+        const { telefono, nombre, refId, fecha, total, pedidos = [], email } = req.body;
+
+        // Resolver el email: el que venga en el body, o el del cliente (match por sufijo de teléfono)
+        let emailCliente = (email || '').trim();
+        let nombreCliente = nombre;
+        if (!emailCliente && telefono) {
+            const cliente = await Clientes.findOne({ telefono: { $regex: telefono + '$' } });
+            if (cliente) {
+                emailCliente = (cliente.email || '').trim();
+                if (!nombreCliente) nombreCliente = cliente.nombre;
+            }
+        }
+
+        // Fire-and-forget: nunca bloquea la respuesta ni el flujo del cliente
+        sendOrderConfirmationEmail({ email: emailCliente, nombre: nombreCliente, refId, fecha, total, pedidos })
+            .catch(err => console.error('Error enviando confirmación de pedido:', err));
+
+        res.status(200).json({ ok: true, tieneEmail: !!emailCliente });
+    } catch (err) {
+        console.error("❌ Error en /confirmacion:", err);
+        res.status(500).json({ ok: false });
     }
 });
 

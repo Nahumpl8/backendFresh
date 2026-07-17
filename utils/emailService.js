@@ -326,4 +326,125 @@ const sendPinRecoveryEmail = async (email, nombre, codigo) => {
     }
 };
 
-module.exports = { sendWelcomeEmail, sendSmartEmail, sendPinRecoveryEmail };
+// --- CONFIRMACIÓN DE PEDIDO ---
+// Envía UN solo correo por orden (aunque la orden tenga varias despensas).
+// - Al cliente si tiene email (to) + copia al negocio (bcc pedidos@freshmarket.mx).
+// - Si el cliente no tiene email, solo la copia al negocio (to pedidos@freshmarket.mx).
+const CORREO_NEGOCIO = 'pedidos@freshmarket.mx';
+
+const formatMoneyMX = (n) =>
+    '$' + Number(n || 0).toLocaleString('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+
+// Quita el sufijo " $123" que a veces trae el title de newProducts
+const limpiaTitulo = (t) => String(t || '').split(' $')[0].trim();
+
+const sendOrderConfirmationEmail = async ({ email, nombre, refId, fecha, total, pedidos = [] }) => {
+    try {
+        const nombreLimpio = String(nombre || 'Cliente').split('-')[0].split(' ')[0].trim();
+
+        // Bloque HTML por cada pedido (despensa o "Pedido" de productos sueltos)
+        const pedidosBlock = pedidos.map(p => {
+            const eliminados = (p.deletedProducts || [])
+                .map(d => `<li style="color:#9ca3af; text-decoration:line-through; margin:2px 0;">${d.nombre || ''}</li>`)
+                .join('');
+            const agregados = (p.newProducts || [])
+                .map(n => `<li style="margin:2px 0;">${limpiaTitulo(n.title)}</li>`)
+                .join('');
+
+            return `
+                <div style="border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <strong style="color:#111827; font-size:16px;">${p.despensa || 'Pedido'}</strong>
+                        <span style="color:#15803d; font-weight:bold;">${formatMoneyMX(p.total)}</span>
+                    </div>
+                    ${agregados ? `<ul style="margin:10px 0 0 0; padding-left:18px; font-size:14px; color:#4b5563;">${agregados}</ul>` : ''}
+                    ${eliminados ? `<p style="margin:10px 0 4px 0; font-size:12px; color:#9ca3af;">Quitado:</p><ul style="margin:0; padding-left:18px; font-size:13px;">${eliminados}</ul>` : ''}
+                </div>`;
+        }).join('');
+
+        const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin:0; padding:0; background-color:#f3f4f6; font-family:'Helvetica Neue', Arial, sans-serif;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                    <td style="padding:20px 0; text-align:center;">
+                        <table role="presentation" width="100%" style="max-width:600px; margin:0 auto; background:#ffffff; border-radius:16px; overflow:hidden; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                                <td style="background-color:#15803d; padding:20px; text-align:center;">
+                                    <img src="cid:logoFresh" alt="Fresh Market" style="width:100px; height:auto; display:block; margin:0 auto;" />
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding:30px;">
+                                    <h2 style="color:#111827; margin:0 0 6px 0; font-size:22px;">¡Gracias por tu pedido, ${nombreLimpio}! 🥕</h2>
+                                    <p style="font-size:15px; color:#4b5563; margin:0 0 20px 0;">Ya recibimos tu pedido. Aquí están los detalles:</p>
+
+                                    <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:12px; padding:14px 18px; margin-bottom:20px;">
+                                        <p style="margin:0 0 4px 0; font-size:13px; color:#166534;">Código de pedido</p>
+                                        <p style="margin:0 0 10px 0; font-size:24px; font-weight:800; color:#166534; letter-spacing:2px;">${refId || '—'}</p>
+                                        <p style="margin:0; font-size:14px; color:#166534;">📅 Entrega: <strong>${fecha || 'Por confirmar'}</strong></p>
+                                    </div>
+
+                                    ${pedidosBlock}
+
+                                    <div style="border-top:2px solid #111827; margin-top:8px; padding-top:14px; text-align:right;">
+                                        <span style="font-size:18px; color:#111827;">Total: <strong style="color:#15803d;">${formatMoneyMX(total)}</strong></span>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="background-color:#f0fdf4; padding:20px; text-align:center; border-top:1px solid #dcfce7;">
+                                    <p style="margin:0 0 10px 0; font-size:14px; color:#166534; font-weight:500;">¿Alguna duda con tu pedido?</p>
+                                    <a href="https://wa.me/527712346620" style="display:inline-block; background-color:#25D366; color:white; padding:8px 16px; border-radius:20px; text-decoration:none; font-size:13px; font-weight:bold;">Escríbenos al WhatsApp</a>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="background-color:#1f2937; padding:20px; text-align:center; color:#9ca3af; font-size:11px;">
+                                    <p style="margin:5px 0;">Fresh Market Pachuca</p>
+                                    <p style="margin:5px 0;">Frescura en cada producto🥕</p>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+        </body>
+        </html>
+        `;
+
+        const tieneEmailCliente = !!(email && email.trim());
+        const destinatarios = {
+            from: '"Fresh Market" <pedidos@freshmarket.mx>',
+            subject: `Pedido confirmado ${refId ? '#' + refId : ''} - Fresh Market 🥕`,
+            html: htmlContent,
+            attachments: [
+                {
+                    filename: 'logo.png',
+                    path: path.join(__dirname, '../assets/freshmarket/logo.png'),
+                    cid: 'logoFresh'
+                }
+            ]
+        };
+
+        if (tieneEmailCliente) {
+            destinatarios.to = email.trim();
+            destinatarios.bcc = CORREO_NEGOCIO; // copia al negocio
+        } else {
+            destinatarios.to = CORREO_NEGOCIO; // solo registro para el negocio
+        }
+
+        await transporter.sendMail(destinatarios);
+        console.log(`✅ Confirmación de pedido ${refId} enviada (cliente: ${tieneEmailCliente ? email : 'sin email'})`);
+        return true;
+    } catch (error) {
+        console.error("Error enviando confirmación de pedido:", error);
+        return false;
+    }
+};
+
+module.exports = { sendWelcomeEmail, sendSmartEmail, sendPinRecoveryEmail, sendOrderConfirmationEmail };
