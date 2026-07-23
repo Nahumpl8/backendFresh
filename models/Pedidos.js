@@ -24,6 +24,7 @@ const PedidoSchema = new mongoose.Schema({
     },
     regaloRuleta: { type: String, default: "" },        // ej. "1kg de Limón de regalo"
     regaloRuletaSpinId: { type: String, default: "" },
+    via: { type: String, default: "" },                 // 'web' si el pedido vino de freshmarket.mx
 },
     { timestamps: true }
 );
