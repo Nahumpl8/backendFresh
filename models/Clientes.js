@@ -8,7 +8,11 @@ const ClienteSchema = new mongoose.Schema({
     telefono: { type: String, required: true, unique: true },
     telefonoSecundario: { type: String, default: null },
     gpsLink: { type: String },
-    
+
+    // --- 🚚 ENVÍO (dirección principal) ---
+    costoEnvio: { type: Number, default: 0 },          // Costo de envío de la dirección principal
+    gratisJueves: { type: Boolean, default: false },   // Zona azul: gratis los jueves
+
     // Auth (Opcionales)
     email: {
         type: String,
@@ -27,7 +31,9 @@ const ClienteSchema = new mongoose.Schema({
     misDirecciones: [{
         alias: String,
         direccion: String,
-        gpsLink: String
+        gpsLink: String,
+        costoEnvio: { type: Number, default: 0 },        // Costo de envío de esta dirección
+        gratisJueves: { type: Boolean, default: false }  // Zona azul: gratis los jueves
     }],
 
     // --- 🟢 PROMOTORES ---
