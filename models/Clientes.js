@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { inferEnvioPrincipal, inferEnvioDireccion } = require('../utils/envioZonas');
 
 // 1. Definimos el Schema como "ClienteSchema" (Singular)
 const ClienteSchema = new mongoose.Schema({
@@ -86,5 +87,39 @@ ClienteSchema.index({ email: 1 }, { unique: true, sparse: true });
 ClienteSchema.index({ nombre: 1 });
 ClienteSchema.index({ telefono: 1 });
 ClienteSchema.index({ nombre: 'text', telefono: 'text' });
+
+// ---------------------------------------------------------
+// 🚚 AUTO-ENVÍO al crear un cliente nuevo
+// ---------------------------------------------------------
+// Solo al CREAR (isNew) y solo si no se mandó un costoEnvio explícito, infiere el
+// costo de envío por la colonia (nombre tras " - " + dirección). Nunca pisa valores
+// manuales ni re-infiere en clientes existentes (los .save() de pedidos tienen isNew=false).
+ClienteSchema.pre('save', function (next) {
+    if (!this.isNew) return next();
+
+    // Dirección principal
+    if (!this.costoEnvio) {
+        const zona = inferEnvioPrincipal({ nombre: this.nombre, direccion: this.direccion });
+        if (zona) {
+            this.costoEnvio = zona.costoEnvio;
+            this.gratisJueves = zona.gratisJueves;
+        }
+    }
+
+    // Direcciones extra que vengan al crear
+    if (Array.isArray(this.misDirecciones)) {
+        this.misDirecciones.forEach((addr) => {
+            if (addr && !addr.costoEnvio) {
+                const zona = inferEnvioDireccion({ alias: addr.alias, direccion: addr.direccion });
+                if (zona) {
+                    addr.costoEnvio = zona.costoEnvio;
+                    addr.gratisJueves = zona.gratisJueves;
+                }
+            }
+        });
+    }
+
+    next();
+});
 
 module.exports = mongoose.model('Clientes', ClienteSchema);

@@ -4,6 +4,7 @@ const { verifyToken } = require('./verifyToken');
 const Pedido = require('../models/Pedidos');
 const WalletDevice = require('../models/WalletDevice');
 const { sendWelcomeEmail } = require('../utils/emailService');
+const { inferEnvioDireccion } = require('../utils/envioZonas');
 
 // Utilidad para limpiar teléfono
 function limpiarTelefono(tel) {
@@ -620,20 +621,28 @@ router.get('/search', async (req, res) => {
 // Agregar dirección extra
 router.put('/add-address/:id', async (req, res) => {
     try {
-        const { alias, direccion, gpsLink } = req.body;
+        const { alias, direccion, gpsLink, costoEnvio, gratisJueves } = req.body;
         if (!direccion) return res.status(400).json("Falta la dirección");
+
+        // Auto-envío: si no viene costoEnvio explícito, inferirlo por la colonia
+        const nuevaDireccion = {
+            alias: alias || 'Nueva Dirección',
+            direccion: direccion,
+            gpsLink: gpsLink || '',
+            costoEnvio: Number(costoEnvio) || 0,
+            gratisJueves: !!gratisJueves,
+        };
+        if (!nuevaDireccion.costoEnvio) {
+            const zona = inferEnvioDireccion({ alias, direccion });
+            if (zona) {
+                nuevaDireccion.costoEnvio = zona.costoEnvio;
+                nuevaDireccion.gratisJueves = zona.gratisJueves;
+            }
+        }
 
         const clienteActualizado = await Clientes.findByIdAndUpdate(
             req.params.id,
-            {
-                $push: {
-                    misDirecciones: {
-                        alias: alias || 'Nueva Dirección',
-                        direccion: direccion,
-                        gpsLink: gpsLink || ''
-                    }
-                }
-            },
+            { $push: { misDirecciones: nuevaDireccion } },
             { new: true }
         );
 
