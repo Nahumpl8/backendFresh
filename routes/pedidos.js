@@ -8,6 +8,7 @@ const notifyPassUpdate = require('../utils/pushApple');
 // 👇 IMPORTANTE: Importamos la lógica de notificación de Google
 const { notifyGoogleWalletUpdate } = require('../utils/pushGoogle');
 const { sendOrderConfirmationEmail } = require('../utils/emailService');
+const { reclamarPromociones } = require('../utils/promociones');
 
 const BASE_URL = process.env.BASE_URL || 'https://backendfresh-production.up.railway.app';
 
@@ -182,9 +183,39 @@ router.post('/new', async (req, res) => {
             }
         }
 
+        // --- PROMOCIONES ---
+        // El front marca aplicarPromo:true en UN solo pedido por checkout (evita
+        // reclamar cupo de más cuando la web parte el pedido en varios).
+        let regaloPromo = '';
+        let descuentoPromo = 0;
+        let puntosDobles = false;
+        let promosAplicadas = [];
+        if (req.body.aplicarPromo === true) {
+            try {
+                promosAplicadas = await reclamarPromociones({
+                    via: req.body.via,
+                    fecha: req.body.fecha,
+                    telefono,
+                });
+                for (const p of promosAplicadas) {
+                    if (p.tipo === 'regalo' && p.regalo) regaloPromo = regaloPromo ? `${regaloPromo}, ${p.regalo}` : p.regalo;
+                    if (p.tipo === 'descuento') descuentoPromo += (p.descuento || 0);
+                    if (p.tipo === 'puntosDobles') puntosDobles = true;
+                }
+            } catch (e) {
+                console.error('⚠️ Error aplicando promociones:', e);
+            }
+        }
+
+        const totalBase = Number(req.body.total) || 0;
+        const totalFinal = Math.max(0, totalBase - descuentoPromo);
+        const regaloFinal = [req.body.regalo, regaloPromo].filter(Boolean).join(', ');
+
         // Crear objeto del pedido
         const newPedido = new Pedido({
             ...req.body,
+            total: totalFinal,
+            regalo: regaloFinal,
             vendedor,
             comision,
             esClienteNuevo
@@ -195,19 +226,22 @@ router.post('/new', async (req, res) => {
 
         let responsePayload = {
             pedido: savedPedido,
-            walletLinks: null
+            walletLinks: null,
+            promociones: promosAplicadas.map(p => ({
+                nombre: p.nombre, tipo: p.tipo, regalo: p.regalo, descuento: p.descuento,
+            })),
         };
 
         // --- ACTUALIZACIÓN DE CLIENTE (Puntos y Sellos) ---
         if (cliente) {
             console.log("👤 Actualizando cliente:", cliente.nombre);
 
-            const totalGastado = (cliente.totalGastado || 0) + req.body.total;
+            const totalGastado = (cliente.totalGastado || 0) + totalFinal;
             const totalPedidos = (cliente.totalPedidos || 0) + 1;
 
-            // 1. CASHBACK: 1.2%
-            const efectivoGastado = req.body.total - (puntosUsados || 0);
-            const nuevosPuntos = Math.round(efectivoGastado * 0.012); 
+            // 1. CASHBACK: 1.2% (x2 si aplica una promo de puntos dobles)
+            const efectivoGastado = totalFinal - (puntosUsados || 0);
+            const nuevosPuntos = Math.round(efectivoGastado * 0.012 * (puntosDobles ? 2 : 1));
             const puntos = (cliente.puntos || 0) - puntosUsados + nuevosPuntos;
 
             // 2. LÓGICA DE RACHA (Semanas seguidas)

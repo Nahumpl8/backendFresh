@@ -36,6 +36,7 @@ const appConfigRoute = require('./routes/appConfig');
 const adminAuthRoute = require('./routes/adminAuth');
 const repartidoresRoute = require('./routes/repartidores');
 const rutasRoute = require('./routes/rutas');
+const promocionesRoute = require('./routes/promociones');
 
 // --- CONEXIÓN A MONGODB ---
 mongoose.connect(process.env.MONGO_URL)
@@ -66,6 +67,7 @@ app.use('/api/app-config', appConfigRoute);
 app.use('/api/admin', adminAuthRoute);
 app.use('/api/repartidores', repartidoresRoute);
 app.use('/api/rutas', rutasRoute);
+app.use('/api/promociones', promocionesRoute);
 
 
 // --- SERVIDOR ---
