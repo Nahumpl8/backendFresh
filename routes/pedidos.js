@@ -209,13 +209,13 @@ router.post('/new', async (req, res) => {
 
         const totalBase = Number(req.body.total) || 0;
         const totalFinal = Math.max(0, totalBase - descuentoPromo);
-        const regaloFinal = [req.body.regalo, regaloPromo].filter(Boolean).join(', ');
 
-        // Crear objeto del pedido
+        // Crear objeto del pedido. El regalo de promo va en su propio campo `regaloPromo`
+        // (NO se mezcla con `regalo`, que es el regalo por despensas / manual).
         const newPedido = new Pedido({
             ...req.body,
             total: totalFinal,
-            regalo: regaloFinal,
+            regaloPromo,
             vendedor,
             comision,
             esClienteNuevo
