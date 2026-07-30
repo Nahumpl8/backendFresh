@@ -459,11 +459,14 @@ router.post('/prefill-pedido', async (req, res) => {
             return res.status(400).json({ error: 'Manda texto o imagen del pedido.' });
         }
 
-        // Contexto: despensas con sus productos, y catálogo para extras.
+        // Contexto: despensas con sus productos, catálogo para extras, y fechas disponibles.
         const despensas = await Despensas.find({ showInWeb: { $ne: false } })
             .populate('products.productId', 'title nombreSinUnidades price');
         const catalogo = await Product.find({ showInWeb: { $ne: false }, inStock: { $ne: false } })
             .select('title price');
+        const AppConfig = require('../models/AppConfig');
+        const cfg = await AppConfig.findOne({ key: 'main' });
+        const fechasList = (cfg && cfg.fechas) || [];
 
         const despensasCtx = despensas.map((d) => {
             const prods = (d.products || [])
@@ -473,7 +476,11 @@ router.post('/prefill-pedido', async (req, res) => {
         }).join('\n');
         const catalogoCtx = catalogo.map((p) => `${p._id}|${p.title}|$${p.price}`).join('\n');
 
-        const system = `${SYSTEM_PREFILL}\n\n== DESPENSAS ==\n${despensasCtx}\n\n== CATÁLOGO (id|producto|precio) ==\n${catalogoCtx}`;
+        const fechasCtx = fechasList.length
+            ? `\n\n== FECHAS DE ENTREGA DISPONIBLES (en "fecha" devuelve EXACTAMENTE una de estas cadenas, la que corresponda al día que pida el cliente) ==\n${fechasList.join('\n')}`
+            : '';
+
+        const system = `${SYSTEM_PREFILL}\n\n== DESPENSAS ==\n${despensasCtx}\n\n== CATÁLOGO (id|producto|precio) ==\n${catalogoCtx}${fechasCtx}`;
 
         const userText = [
             texto ? `Pedido del operador: ${texto}` : '',
@@ -525,6 +532,19 @@ router.post('/prefill-pedido', async (req, res) => {
             if (prod) newProducts.push({ _id: String(prod._id), title: prod.title, price: prod.price || 0 });
         }
 
+        // Normalizar la fecha a una de las opciones exactas del catálogo (el sistema filtra por esa cadena).
+        let fechaFinal = data.fecha || '';
+        if (fechaFinal && fechasList.length) {
+            const exacta = fechasList.find((f) => norm(f) === norm(fechaFinal));
+            if (exacta) {
+                fechaFinal = exacta;
+            } else {
+                const dia = norm(fechaFinal).split(/[ ,]/)[0]; // "viernes"
+                const porDia = fechasList.find((f) => norm(f).startsWith(dia));
+                if (porDia) fechaFinal = porDia;
+            }
+        }
+
         const qty = data.despensaQuantity || (despensa ? 1 : 0);
         const totalDespensa = despensa ? (despensa.price || 0) * (qty || 1) : 0;
         const totalQuita = deletedProducts.reduce((a, p) => a + (p.precio || 0), 0);
@@ -548,7 +568,7 @@ router.post('/prefill-pedido', async (req, res) => {
             despensaQuantity: qty,
             deletedProducts,  // ya quitados
             newProducts,      // extras
-            fecha: data.fecha || '',
+            fecha: fechaFinal,
             total,
             aviso: data.aviso || '',
             usage: resp.usage,
