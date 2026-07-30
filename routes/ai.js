@@ -32,13 +32,12 @@ REGLAS DEL NEGOCIO (importantes para partir bien el pedido):
   En ese caso devuelve DOS entradas en "pedidos": una tipo "despensa" (con sus "cambios") y otra
   tipo "pedido" (con los extras en "productos").
 - Si el cliente NO pide despensa, solo productos, es un único pedido tipo "pedido".
-- MÍNIMO ($320 por día): el mínimo aplica al TOTAL de los pedidos de un mismo cliente PARA EL
-  MISMO DÍA de entrega, que debe sumar al menos $320. CUMPLEN la regla, por ejemplo: un pedido de
-  $320 o más; una despensa; o DOS pedidos del mismo día de $160 cada uno (160+160 = 320). Solo si
-  el total del cliente para ese día queda POR DEBAJO de $320 y no hay una despensa/otro pedido que
-  lo cubra, pon "alertaMinimo": true en el/los pedidos afectados y en "aviso" escribe algo como
-  "El total del día no llega a $320: preguntar al admin si se cobra envío extra". Si el total del
-  día sí llega (aunque sea con 2 pedidos de $160), NO pongas alerta.
+- MÍNIMO ($320, SOLO personalizados): una DESPENSA cumple SIEMPRE, sin importar su precio (NO le
+  pongas alertaMinimo). El mínimo de $320 aplica solo a pedidos PERSONALIZADOS (tipo "pedido", sin
+  despensa). Un personalizado debe sumar >= $320; 2 personalizados del mismo día de $160 c/u
+  cumplen (160+160=320). Solo si un personalizado queda por debajo de $320 y no hay otro
+  pedido/despensa del día que lo cubra, pon "alertaMinimo": true con "aviso" tipo "El personalizado
+  no llega a $320: preguntar al admin si se cobra envío extra". Nunca alertes por una despensa.
 
 CAMPOS:
 - Una conversación/imagen puede traer VARIOS clientes/pedidos. Devuélvelos todos en "pedidos".
@@ -186,7 +185,7 @@ REGLAS DEL NEGOCIO:
 - Una DESPENSA es un paquete a precio fijo con HASTA 3 CAMBIOS (quita un producto, pon otro). Los cambios NO bajan el precio. Manda los "quita" en deletedProducts y los "pone" en newProducts.
 - Despensa + extras (más allá de los cambios) = DOS pedidos: uno con la despensa y otro tipo "pedido" (despensa "" y despensaQuantity 0) con los extras en newProducts.
 - Solo productos, sin despensa = un pedido con despensa "".
-- MÍNIMO $320 por día: el total del cliente para el mismo día debe sumar >= $320. Cumplen: un pedido de $320+, una despensa, o 2 pedidos del mismo día de $160 c/u. Si el total del día NO llega a $320 y no hay despensa que lo cubra, AVISA al operador y pregunta si se cobra envío extra antes de registrar.
+- MÍNIMO $320 (SOLO pedidos personalizados): una DESPENSA cumple SIEMPRE, sin importar su precio — NO le apliques mínimo. El mínimo de $320 aplica únicamente a pedidos PERSONALIZADOS (tipo "pedido", sin despensa). Un personalizado debe llegar a $320; si el mismo cliente hace 2 personalizados el mismo día pueden ser de $160 c/u (160+160=320). Solo si un personalizado no llega a $320 y no hay otro pedido/despensa del día que lo cubra, avisa y pregunta si se cobra envío extra. NUNCA bloquees ni alertes por el monto de una despensa.
 - El "total" de cada pedido es obligatorio: úsalo del precio de la despensa (te doy la lista con precios) + precios de extras que te dé el operador. Si no tienes un precio, pídelo.
 
 Sé breve y claro. Responde en español. Nunca registres un pedido sin confirmación explícita.`;
@@ -248,18 +247,24 @@ const TOOLS = [
     },
 ];
 
-// Mensaje de confirmación para mandar por WhatsApp al cliente.
+// Mensaje de pedido en el MISMO formato que el panel (generateOrderMessage de BuenoPedidos).
 function buildMensajeWhatsApp(p) {
-    const L = ['🥕 *Fresh Market* — Confirmación de tu pedido', ''];
-    if (p.cliente) L.push(`👤 ${p.cliente}`);
-    if (p.fecha) L.push(`📅 Entrega: ${p.fecha}`);
-    if (p.despensa) L.push(`📦 ${p.despensaQuantity || 1}x ${p.despensa}`);
-    (p.deletedProducts || []).forEach((d) => L.push(`   ↔️ Cambio: quita ${d.nombre || d}`));
-    const extras = (p.newProducts || []).map((x) => `${x.title}${x.price ? ` ($${x.price})` : ''}`);
-    if (extras.length) L.push(`🛒 ${extras.join(', ')}`);
-    if (p.envio) L.push(`🚚 Envío: $${p.envio}`);
-    L.push('', `💵 *Total: $${p.total || 0}*`, '', '¡Gracias por tu compra! 🙏');
-    return L.join('\n');
+    const nombre = (p.cliente || '').split('-')[0].trim();
+    let msg = `🟣 ${nombre} - ${p.direccion || ''}`;
+    if (p.despensa) msg += ` ( ${p.despensaQuantity || ''} ${p.despensa} )`;
+    if ((p.deletedProducts || []).length) {
+        msg += (p.deletedProducts.map((d) => ` no ${d.nombre || d}`).join(',')) + ',';
+    }
+    if ((p.newProducts || []).length) {
+        msg += ` EXTRAS:` + (p.newProducts.map((x) => ` ${x.title}`).join(',')) + ',';
+    }
+    if (p.regalo) msg += ` Regalo: ${p.regalo}`;
+    if (p.envio) msg += ` + envío: $${p.envio}`;
+    if (p.total) msg += ` Total $${p.total}`;
+    if (p.telefono) msg += ` CEL. ${p.telefono}`;
+    if (p.fecha) msg += ` ${String(p.fecha).split(',')[0]}`;
+    if (p.nota) msg += ` Nota: ${p.nota}`;
+    return msg;
 }
 
 async function ejecutarTool(name, input) {
@@ -298,13 +303,26 @@ async function ejecutarTool(name, input) {
         }
         if (name === 'crear_pedido') {
             if (!input.confirmado) return { ok: false, error: 'No confirmado por el operador.' };
+
+            const tel = limpiarTel(input.telefono);
+            // La despensa NO puede ir vacía (el modelo la exige). Si es personalizado, "Pedido".
+            const despensa = (input.despensa && input.despensa.trim()) ? input.despensa.trim() : 'Pedido';
+            // La dirección es obligatoria: si falta, la tomamos del cliente por teléfono.
+            let direccion = (input.direccion || '').trim();
+            if (!direccion && tel.length >= 10) {
+                const c = await Clientes.findOne({ telefono: { $regex: tel.slice(-10) + '$' } });
+                if (c) direccion = c.direccion || (c.misDirecciones && c.misDirecciones[0] && c.misDirecciones[0].direccion) || '';
+            }
+            if (!direccion) return { ok: false, error: 'Falta la dirección de entrega. Pregúntala al operador.' };
+            if (!tel) return { ok: false, error: 'Falta el teléfono del cliente.' };
+
             const payload = {
                 cliente: input.cliente,
-                telefono: limpiarTel(input.telefono),
-                direccion: input.direccion || '',
+                telefono: tel,
+                direccion,
                 gpsLink: input.gpsLink || '',
-                despensa: input.despensa || '',
-                despensaQuantity: input.despensaQuantity || 0,
+                despensa,
+                despensaQuantity: (input.despensaQuantity != null ? input.despensaQuantity : (despensa === 'Pedido' ? 0 : 1)),
                 newProducts: input.newProducts || [],
                 deletedProducts: input.deletedProducts || [],
                 total: input.total || 0,
@@ -323,8 +341,11 @@ async function ejecutarTool(name, input) {
         }
         return { error: 'Herramienta desconocida: ' + name };
     } catch (e) {
-        console.error('❌ tool error', name, e.message);
-        return { ok: false, error: e.message };
+        const detalle = e.response && e.response.data
+            ? (typeof e.response.data === 'string' ? e.response.data : JSON.stringify(e.response.data))
+            : e.message;
+        console.error('❌ tool error', name, detalle);
+        return { ok: false, error: `Error al ${name}: ${detalle}` };
     }
 }
 
