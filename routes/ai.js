@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const Clientes = require('../models/Clientes');
+const Despensas = require('../models/Despensas');
 const { askVision } = require('../utils/ai');
 
 // Limpia un teléfono a 10 dígitos (quita lada 52), igual que el resto del backend.
@@ -70,6 +71,16 @@ router.post('/parse-pedido', async (req, res) => {
             return res.status(400).json({ error: 'Manda al menos una imagen o texto del pedido.' });
         }
 
+        // Cargar las despensas reales de la base para que la IA use el nombre exacto.
+        let despensasCtx = '';
+        try {
+            const despensas = await Despensas.find({ showInWeb: { $ne: false } }).select('name price');
+            if (despensas.length) {
+                despensasCtx = '\n\nDespensas disponibles (usa EXACTAMENTE uno de estos nombres en "despensa" si el cliente pide una despensa):\n'
+                    + despensas.map(d => `- ${d.name}${d.price ? ` ($${d.price})` : ''}`).join('\n');
+            }
+        } catch (e) { console.warn('No se pudieron cargar despensas para el prompt:', e.message); }
+
         const userText = [
             texto ? `Contexto del operador: ${texto}` : '',
             telefono ? `El operador dice que el cliente es el teléfono: ${telefono}` : '',
@@ -79,7 +90,7 @@ router.post('/parse-pedido', async (req, res) => {
         const { data, usage } = await askVision({
             images,
             text: userText,
-            systemPrompt: SYSTEM_PARSE_PEDIDO,
+            systemPrompt: SYSTEM_PARSE_PEDIDO + despensasCtx,
             schema: PEDIDO_SCHEMA,
         });
 
