@@ -410,172 +410,230 @@ router.post('/chat-pedido', async (req, res) => {
 });
 
 // ============================================================================
-// PREFILL DE PEDIDO — la IA lee el pedido y devuelve los datos ya emparejados
-// con el catálogo (precios reales) para LLENAR el formulario de /pedidos/nuevopedido.
-// El admin revisa y da "Registrar" (reusa toda la lógica del formulario).
+// PREFILL DE PEDIDO — la IA arma el pedido emparejado con el catálogo (precios
+// reales) para LLENAR el formulario de /pedidos/nuevopedido. El admin revisa y
+// da "Registrar" (reusa toda la lógica del formulario).
 // ============================================================================
-const SYSTEM_PREFILL = `Eres el asistente de captura de Fresh Market (Pachuca). Lee el pedido que te describe el operador (texto y/o imagen) y devuélvelo en el JSON del schema, EMPAREJADO con el catálogo que te doy.
 
-- despensaName: nombre EXACTO de la despensa (de la lista) si el cliente pide una; si es solo productos sueltos, "" y esPersonalizado=true.
-- despensaQuantity: cuántas (normalmente 1); 0 si es personalizado.
-- quita: nombres EXACTOS (de los productos de esa despensa que te listo) que el cliente quiere QUITAR (ej. "no nopales"). Solo de esa despensa.
-- extras: productos que se AGREGAN (los "pone" de un cambio y/o extras sueltos). Usa el "id" EXACTO del catálogo. Si el operador dice un producto que no está en el catálogo, omítelo y menciónalo en "aviso".
-- clienteNombre/telefono/direccion/colonia: del texto/imagen si aparecen; lo que no, "".
-- fecha: día/fecha de entrega si la mencionan; si no, "".
-- MÍNIMO $320 solo para PERSONALIZADOS (sin despensa). Las despensas cumplen siempre. Si un personalizado no llega a $320, ponlo en "aviso".
-- NO inventes. Lo que no sepas, vacío. El operador revisa todo en el formulario.`;
+// Contexto (despensas con productos, catálogo, fechas) para los prompts.
+async function getContextoPedido() {
+    const despensas = await Despensas.find({ showInWeb: { $ne: false } })
+        .populate('products.productId', 'title nombreSinUnidades price');
+    const catalogo = await Product.find({ showInWeb: { $ne: false }, inStock: { $ne: false } }).select('title price');
+    const AppConfig = require('../models/AppConfig');
+    const cfg = await AppConfig.findOne({ key: 'main' });
+    const fechasList = (cfg && cfg.fechas) || [];
 
+    const despensasCtx = despensas.map((d) => {
+        const prods = (d.products || [])
+            .map((p) => (p.productId ? (p.productId.nombreSinUnidades || p.productId.title) : null))
+            .filter(Boolean);
+        return `Despensa "${d.name}" ($${d.price}) — productos: ${prods.join(', ')}`;
+    }).join('\n');
+    const catalogoCtx = catalogo.map((p) => `${p._id}|${p.title}|$${p.price}`).join('\n');
+    const fechasCtx = fechasList.length
+        ? `\n\n== FECHAS DE ENTREGA DISPONIBLES (usa EXACTAMENTE una de estas cadenas) ==\n${fechasList.join('\n')}`
+        : '';
+    const ctx = `\n\n== DESPENSAS ==\n${despensasCtx}\n\n== CATÁLOGO (id|producto|precio) ==\n${catalogoCtx}${fechasCtx}`;
+    return { despensas, catalogo, fechasList, ctx };
+}
+
+// Resuelve un pedido (nombres/ids -> productos reales con precios) y calcula total.
+// data: { despensaName, despensaQuantity, quita:[], extras:[{productId,cantidad}], fecha, clienteNombre, telefono, direccion, colonia, aviso }
+async function resolverPedido(data, { despensas, fechasList }, telefonoOperador) {
+    let despensa = null, despensaProducts = [], deletedProducts = [];
+    if (data.despensaName) {
+        despensa = despensas.find((d) => norm(d.name) === norm(data.despensaName))
+            || despensas.find((d) => norm(d.name).includes(norm(data.despensaName)));
+        if (despensa) {
+            despensaProducts = (despensa.products || []).map((p, i) => ({
+                id: (p.productId && p.productId._id) ? String(p.productId._id) : `item-${i}`,
+                nombre: p.productId ? (p.productId.nombreSinUnidades || p.productId.title) : '',
+                precio: (p.productId && p.productId.price) || 0,
+                cantidad: p.cantidad, unidad: p.unidad,
+            }));
+            deletedProducts = (data.quita || [])
+                .map((q) => despensaProducts.find((dp) => norm(dp.nombre) === norm(q) || norm(dp.nombre).includes(norm(q))))
+                .filter(Boolean);
+        }
+    }
+
+    const newProducts = [];
+    const noEncontrados = [];
+    for (const e of (data.extras || [])) {
+        let prod = null;
+        try { prod = await Product.findById(e.productId).select('title price'); } catch (_) {}
+        if (prod) newProducts.push({ _id: String(prod._id), title: prod.title, price: prod.price || 0 });
+        else noEncontrados.push(e.productId);
+    }
+
+    let fechaFinal = data.fecha || '';
+    if (fechaFinal && fechasList.length) {
+        const exacta = fechasList.find((f) => norm(f) === norm(fechaFinal));
+        if (exacta) fechaFinal = exacta;
+        else {
+            const dia = norm(fechaFinal).split(/[ ,]/)[0];
+            const porDia = fechasList.find((f) => norm(f).startsWith(dia));
+            if (porDia) fechaFinal = porDia;
+        }
+    }
+
+    const qty = data.despensaQuantity != null ? data.despensaQuantity : (despensa ? 1 : 0);
+    const totalDespensa = despensa ? (despensa.price || 0) * (qty || 1) : 0;
+    const totalQuita = deletedProducts.reduce((a, p) => a + (p.precio || 0), 0);
+    const totalExtras = newProducts.reduce((a, p) => a + (p.price || 0), 0);
+    const total = Math.max(0, totalDespensa - totalQuita + totalExtras);
+
+    const tel = limpiarTel(telefonoOperador) || limpiarTel(data.telefono);
+    let cliente = null;
+    if (tel && tel.length >= 10) cliente = await Clientes.findOne({ telefono: { $regex: tel.slice(-10) + '$' } });
+
+    return {
+        clienteEncontrado: !!cliente,
+        cliente,
+        clienteNombre: data.clienteNombre || '',
+        telefono: tel || data.telefono || '',
+        direccion: data.direccion || '',
+        colonia: data.colonia || '',
+        despensa: despensa ? { _id: String(despensa._id), name: despensa.name, price: despensa.price } : null,
+        despensaProducts,
+        despensaQuantity: qty,
+        deletedProducts,
+        newProducts,
+        noEncontrados,
+        fecha: fechaFinal,
+        total,
+        aviso: data.aviso || '',
+    };
+}
+
+// ---- One-shot (cuadro único): extrae y devuelve el prefill ----
+const SYSTEM_PREFILL = `Eres el asistente de captura de Fresh Market (Pachuca). Lee el pedido (texto y/o imagen) y devuélvelo en el JSON del schema, EMPAREJADO con el catálogo. despensaName exacto de la lista (o "" si es personalizado). quita: nombres exactos de productos de esa despensa. extras: usa el "id" exacto del catálogo. NO inventes; lo que no esté, vacío. MÍNIMO $320 solo para personalizados.`;
 const PREFILL_SCHEMA = {
-    type: 'object',
-    additionalProperties: false,
+    type: 'object', additionalProperties: false,
     properties: {
-        clienteNombre: { type: 'string' },
-        telefono: { type: 'string' },
-        direccion: { type: 'string' },
-        colonia: { type: 'string' },
-        despensaName: { type: 'string' },
-        despensaQuantity: { type: 'number' },
+        clienteNombre: { type: 'string' }, telefono: { type: 'string' }, direccion: { type: 'string' }, colonia: { type: 'string' },
+        despensaName: { type: 'string' }, despensaQuantity: { type: 'number' },
         quita: { type: 'array', items: { type: 'string' } },
-        extras: {
-            type: 'array',
-            items: {
-                type: 'object', additionalProperties: false,
-                properties: { productId: { type: 'string' }, cantidad: { type: 'number' } },
-                required: ['productId', 'cantidad'],
-            },
-        },
-        fecha: { type: 'string' },
-        esPersonalizado: { type: 'boolean' },
-        aviso: { type: 'string' },
+        extras: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { productId: { type: 'string' }, cantidad: { type: 'number' } }, required: ['productId', 'cantidad'] } },
+        fecha: { type: 'string' }, esPersonalizado: { type: 'boolean' }, aviso: { type: 'string' },
     },
     required: ['clienteNombre', 'telefono', 'direccion', 'colonia', 'despensaName', 'despensaQuantity', 'quita', 'extras', 'fecha', 'esPersonalizado', 'aviso'],
 };
 
-// POST /api/ai/prefill-pedido  { texto?, images?, telefono? }
 router.post('/prefill-pedido', async (req, res) => {
     try {
         const { texto = '', images = [], telefono = '' } = req.body || {};
-        if ((!images || images.length === 0) && !String(texto).trim()) {
-            return res.status(400).json({ error: 'Manda texto o imagen del pedido.' });
-        }
+        if ((!images || images.length === 0) && !String(texto).trim()) return res.status(400).json({ error: 'Manda texto o imagen del pedido.' });
 
-        // Contexto: despensas con sus productos, catálogo para extras, y fechas disponibles.
-        const despensas = await Despensas.find({ showInWeb: { $ne: false } })
-            .populate('products.productId', 'title nombreSinUnidades price');
-        const catalogo = await Product.find({ showInWeb: { $ne: false }, inStock: { $ne: false } })
-            .select('title price');
-        const AppConfig = require('../models/AppConfig');
-        const cfg = await AppConfig.findOne({ key: 'main' });
-        const fechasList = (cfg && cfg.fechas) || [];
-
-        const despensasCtx = despensas.map((d) => {
-            const prods = (d.products || [])
-                .map((p) => (p.productId ? (p.productId.nombreSinUnidades || p.productId.title) : null))
-                .filter(Boolean);
-            return `Despensa "${d.name}" ($${d.price}) — productos: ${prods.join(', ')}`;
-        }).join('\n');
-        const catalogoCtx = catalogo.map((p) => `${p._id}|${p.title}|$${p.price}`).join('\n');
-
-        const fechasCtx = fechasList.length
-            ? `\n\n== FECHAS DE ENTREGA DISPONIBLES (en "fecha" devuelve EXACTAMENTE una de estas cadenas, la que corresponda al día que pida el cliente) ==\n${fechasList.join('\n')}`
-            : '';
-
-        const system = `${SYSTEM_PREFILL}\n\n== DESPENSAS ==\n${despensasCtx}\n\n== CATÁLOGO (id|producto|precio) ==\n${catalogoCtx}${fechasCtx}`;
-
-        const userText = [
-            texto ? `Pedido del operador: ${texto}` : '',
-            telefono ? `Teléfono del cliente: ${telefono}` : '',
-            'Devuelve el pedido emparejado en el JSON del schema.',
-        ].filter(Boolean).join('\n');
-
-        // Sonnet para el emparejamiento con el catálogo.
+        const contexto = await getContextoPedido();
+        const system = SYSTEM_PREFILL + contexto.ctx;
+        const userText = [texto ? `Pedido del operador: ${texto}` : '', telefono ? `Teléfono del cliente: ${telefono}` : '', 'Devuelve el pedido emparejado.'].filter(Boolean).join('\n');
         const contentBlocks = [];
         for (const img of images) if (img && img.dataBase64) contentBlocks.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType || 'image/jpeg', data: img.dataBase64 } });
         contentBlocks.push({ type: 'text', text: userText });
 
-        const resp = await client.messages.create({
-            model: 'claude-sonnet-5',
-            max_tokens: 4000,
-            system,
-            output_config: { format: { type: 'json_schema', schema: PREFILL_SCHEMA } },
-            messages: [{ role: 'user', content: contentBlocks }],
-        });
+        const resp = await client.messages.create({ model: 'claude-sonnet-5', max_tokens: 4000, system, output_config: { format: { type: 'json_schema', schema: PREFILL_SCHEMA } }, messages: [{ role: 'user', content: contentBlocks }] });
         try { console.log('🤖 prefill usage:', JSON.stringify(resp.usage)); } catch (_) {}
         if (resp.stop_reason === 'refusal') return res.status(200).json({ error: 'La IA rechazó la solicitud.' });
         const txt = (resp.content || []).find((b) => b.type === 'text');
-        let data;
-        try { data = JSON.parse(txt ? txt.text : '{}'); } catch (e) { return res.status(500).json({ error: 'Respuesta IA inválida' }); }
+        let data; try { data = JSON.parse(txt ? txt.text : '{}'); } catch (e) { return res.status(500).json({ error: 'Respuesta IA inválida' }); }
 
-        // Resolver despensa + productos con precios reales.
-        let despensa = null, despensaProducts = [], deletedProducts = [];
-        if (data.despensaName) {
-            despensa = despensas.find((d) => norm(d.name) === norm(data.despensaName))
-                || despensas.find((d) => norm(d.name).includes(norm(data.despensaName)));
-            if (despensa) {
-                despensaProducts = (despensa.products || []).map((p, i) => ({
-                    id: (p.productId && p.productId._id) ? String(p.productId._id) : `item-${i}`,
-                    nombre: p.productId ? (p.productId.nombreSinUnidades || p.productId.title) : '',
-                    precio: (p.productId && p.productId.price) || 0,
-                    cantidad: p.cantidad, unidad: p.unidad,
-                }));
-                deletedProducts = (data.quita || [])
-                    .map((q) => despensaProducts.find((dp) => norm(dp.nombre) === norm(q) || norm(dp.nombre).includes(norm(q))))
-                    .filter(Boolean);
-            }
-        }
-
-        // Resolver extras con el catálogo (por id; fallback por título).
-        const newProducts = [];
-        for (const e of (data.extras || [])) {
-            let prod = null;
-            try { prod = await Product.findById(e.productId).select('title price'); } catch (_) {}
-            if (prod) newProducts.push({ _id: String(prod._id), title: prod.title, price: prod.price || 0 });
-        }
-
-        // Normalizar la fecha a una de las opciones exactas del catálogo (el sistema filtra por esa cadena).
-        let fechaFinal = data.fecha || '';
-        if (fechaFinal && fechasList.length) {
-            const exacta = fechasList.find((f) => norm(f) === norm(fechaFinal));
-            if (exacta) {
-                fechaFinal = exacta;
-            } else {
-                const dia = norm(fechaFinal).split(/[ ,]/)[0]; // "viernes"
-                const porDia = fechasList.find((f) => norm(f).startsWith(dia));
-                if (porDia) fechaFinal = porDia;
-            }
-        }
-
-        const qty = data.despensaQuantity || (despensa ? 1 : 0);
-        const totalDespensa = despensa ? (despensa.price || 0) * (qty || 1) : 0;
-        const totalQuita = deletedProducts.reduce((a, p) => a + (p.precio || 0), 0);
-        const totalExtras = newProducts.reduce((a, p) => a + (p.price || 0), 0);
-        const total = Math.max(0, totalDespensa - totalQuita + totalExtras);
-
-        // Cliente por teléfono.
-        const tel = limpiarTel(telefono) || limpiarTel(data.telefono);
-        let cliente = null;
-        if (tel && tel.length >= 10) cliente = await Clientes.findOne({ telefono: { $regex: tel.slice(-10) + '$' } });
-
-        res.status(200).json({
-            clienteEncontrado: !!cliente,
-            cliente,
-            clienteNombre: data.clienteNombre || '',
-            telefono: tel || data.telefono || '',
-            direccion: data.direccion || '',
-            colonia: data.colonia || '',
-            despensa: despensa ? { _id: String(despensa._id), name: despensa.name, price: despensa.price } : null,
-            despensaProducts, // candidatos para el select de "eliminar"
-            despensaQuantity: qty,
-            deletedProducts,  // ya quitados
-            newProducts,      // extras
-            fecha: fechaFinal,
-            total,
-            aviso: data.aviso || '',
-            usage: resp.usage,
-        });
+        const resuelto = await resolverPedido(data, contexto, telefono);
+        res.status(200).json({ ...resuelto, usage: resp.usage });
     } catch (err) {
         console.error('❌ prefill-pedido error:', err);
         res.status(500).json({ error: err.message || 'Error leyendo el pedido' });
+    }
+});
+
+// ---- Conversacional: la IA explica, pregunta si hay duda, y llena el formulario ----
+const SYSTEM_CHAT_PREFILL = `Eres el asistente de captura de pedidos de Fresh Market (Pachuca). El OPERADOR (admin) te describe pedidos y tú LLENAS el formulario de nuevo pedido con la herramienta "prellenar_formulario". El operador revisa y da "Registrar" (tú NUNCA registras el pedido).
+
+SÉ ESTRICTO — NO INVENTES:
+- Empareja SIEMPRE contra el catálogo que te doy. Si un producto que pide el cliente coincide con MÁS DE UNO del catálogo (ej. "uva" → "uva verde" y "cupón uva roja"), o no es claro cuál es, o no existe, PREGUNTA al operador cuál es exactamente (lista las opciones). NO elijas por tu cuenta.
+- Si falta un dato (fecha de entrega, cantidad, qué despensa, etc.), PREGÚNTALO.
+- Usa los "id" del catálogo para los extras; los "quita" son nombres de productos de la despensa elegida.
+
+FLUJO:
+1. Identifica al cliente con buscar_cliente (por teléfono o nombre). Si tiene varias direcciones, menciónalas y pregunta a cuál.
+2. Cuando tengas todo CLARO y sin ambigüedad, llama prellenar_formulario y luego EXPLICA en 2-4 líneas qué llenaste: despensa, cambios (quita/pone), extras con precio, total y fecha. Invita al operador a corregir si algo está mal.
+3. Si el operador pide un cambio, ajusta y vuelve a llamar prellenar_formulario.
+
+REGLAS: una despensa admite hasta 3 cambios (quita/pone, no baja el precio); extras van aparte; MÍNIMO $320 solo para pedidos personalizados (sin despensa), las despensas cumplen siempre. Responde en español, breve.`;
+
+const PRELLENAR_TOOLS = [
+    TOOLS.find((t) => t.name === 'buscar_cliente'),
+    {
+        name: 'prellenar_formulario',
+        description: 'Vuelca el pedido al formulario del operador. Llámalo solo cuando NO haya ambigüedad (ya preguntaste lo dudoso). Puedes volver a llamarlo para ajustar.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                clienteNombre: { type: 'string' }, telefono: { type: 'string' }, direccion: { type: 'string' }, colonia: { type: 'string' },
+                despensaName: { type: 'string' }, despensaQuantity: { type: 'number' },
+                quita: { type: 'array', items: { type: 'string' } },
+                extras: { type: 'array', items: { type: 'object', properties: { productId: { type: 'string' }, cantidad: { type: 'number' } }, required: ['productId'] } },
+                fecha: { type: 'string' }, aviso: { type: 'string' },
+            },
+            required: ['despensaName', 'quita', 'extras'],
+        },
+    },
+];
+
+router.post('/chat-prefill', async (req, res) => {
+    try {
+        const { messages = [], userText = '', images = [], telefono = '' } = req.body || {};
+        const apiMessages = Array.isArray(messages) ? [...messages] : [];
+        const userContent = [];
+        for (const img of images) if (img && img.dataBase64) userContent.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType || 'image/jpeg', data: img.dataBase64 } });
+        if (userText) userContent.push({ type: 'text', text: userText });
+        if (userContent.length) apiMessages.push({ role: 'user', content: userContent });
+        if (!apiMessages.length) return res.status(400).json({ error: 'Sin mensaje.' });
+
+        const contexto = await getContextoPedido();
+        const system = SYSTEM_CHAT_PREFILL + contexto.ctx;
+        let prefill = null;
+
+        let guard = 0;
+        while (guard++ < 8) {
+            const resp = await client.messages.create({ model: 'claude-sonnet-5', max_tokens: 4000, system, tools: PRELLENAR_TOOLS, messages: apiMessages });
+            try { console.log('🤖 chat-prefill usage:', JSON.stringify(resp.usage)); } catch (_) {}
+            apiMessages.push({ role: 'assistant', content: resp.content });
+            if (resp.stop_reason !== 'tool_use') break;
+
+            const results = [];
+            for (const b of resp.content) {
+                if (b.type !== 'tool_use') continue;
+                if (b.name === 'prellenar_formulario') {
+                    const resuelto = await resolverPedido(b.input, contexto, telefono || b.input.telefono);
+                    prefill = resuelto;
+                    const resumen = {
+                        ok: true,
+                        despensa: resuelto.despensa ? resuelto.despensa.name : '(personalizado)',
+                        quitados: resuelto.deletedProducts.map((d) => d.nombre),
+                        extras: resuelto.newProducts.map((p) => `${p.title} $${p.price}`),
+                        extrasNoEncontrados: resuelto.noEncontrados,
+                        total: resuelto.total,
+                        fecha: resuelto.fecha,
+                        clienteEncontrado: resuelto.clienteEncontrado,
+                        direccion: resuelto.direccion || (resuelto.cliente && resuelto.cliente.direccion) || '',
+                    };
+                    results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(resumen) });
+                } else {
+                    const r = await ejecutarTool(b.name, b.input);
+                    results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(r) });
+                }
+            }
+            apiMessages.push({ role: 'user', content: results });
+        }
+
+        const last = apiMessages[apiMessages.length - 1] || {};
+        const reply = (last.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+        res.status(200).json({ messages: apiMessages, reply, prefill });
+    } catch (err) {
+        console.error('❌ chat-prefill error:', err);
+        res.status(500).json({ error: err.message || 'Error en el chat' });
     }
 });
 
