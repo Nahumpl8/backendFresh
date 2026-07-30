@@ -9,7 +9,7 @@ const cors = require('cors');
 dotenv.config();
 app.use(cors());
 app.options('*', cors());
-app.use(express.json());
+app.use(express.json({ limit: '25mb' })); // 25mb: las capturas en base64 (IA) superan el default de 100kb
 
 // Archivos estáticos
 app.use('/public', express.static(path.join(__dirname, 'assets')));
@@ -37,6 +37,7 @@ const adminAuthRoute = require('./routes/adminAuth');
 const repartidoresRoute = require('./routes/repartidores');
 const rutasRoute = require('./routes/rutas');
 const promocionesRoute = require('./routes/promociones');
+const aiRoute = require('./routes/ai');
 
 // --- CONEXIÓN A MONGODB ---
 mongoose.connect(process.env.MONGO_URL)
@@ -68,6 +69,7 @@ app.use('/api/admin', adminAuthRoute);
 app.use('/api/repartidores', repartidoresRoute);
 app.use('/api/rutas', rutasRoute);
 app.use('/api/promociones', promocionesRoute);
+app.use('/api/ai', aiRoute);
 
 
 // --- SERVIDOR ---
