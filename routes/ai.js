@@ -419,7 +419,9 @@ router.post('/chat-pedido', async (req, res) => {
 async function getContextoPedido() {
     const despensas = await Despensas.find({ showInWeb: { $ne: false } })
         .populate('products.productId', 'title nombreSinUnidades price');
-    const catalogo = await Product.find({ showInWeb: { $ne: false }, inStock: { $ne: false } }).select('title price');
+    // TODOS los productos (sin filtrar por showInWeb/inStock): los cupones y promos
+    // suelen estar ocultos de la web pero SÍ se pueden agregar a un pedido manual.
+    const catalogo = await Product.find({}).select('title price');
     const AppConfig = require('../models/AppConfig');
     const cfg = await AppConfig.findOne({ key: 'main' });
     const fechasList = (cfg && cfg.fechas) || [];
