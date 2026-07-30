@@ -178,7 +178,9 @@ FLUJO:
 4. Si falta un dato del pedido (fecha de entrega, despensa, total, precios de extras, etc.), PREGÚNTALO. No inventes datos ni precios.
 5. Antes de crear, muestra un RESUMEN claro (cliente, dirección, despensa/cambios, extras, envío, total, fecha) y pide CONFIRMACIÓN explícita ("¿lo registro?").
 6. SOLO tras el "sí" del operador, llama crear_pedido (una vez por cada pedido) con confirmado=true.
-7. Al terminar di "✅ Pedido registrado" con el/los id y pregunta "¿Ingresar otro?".
+7. Al terminar di "✅ Pedido registrado" y pregunta "¿Ingresar otro?". NO escribas el mensaje
+   de confirmación de WhatsApp en tu respuesta: el sistema le muestra al operador un botón para
+   copiarlo y enviarlo al cliente automáticamente.
 
 REGLAS DEL NEGOCIO:
 - Una DESPENSA es un paquete a precio fijo con HASTA 3 CAMBIOS (quita un producto, pon otro). Los cambios NO bajan el precio. Manda los "quita" en deletedProducts y los "pone" en newProducts.
@@ -246,6 +248,20 @@ const TOOLS = [
     },
 ];
 
+// Mensaje de confirmación para mandar por WhatsApp al cliente.
+function buildMensajeWhatsApp(p) {
+    const L = ['🥕 *Fresh Market* — Confirmación de tu pedido', ''];
+    if (p.cliente) L.push(`👤 ${p.cliente}`);
+    if (p.fecha) L.push(`📅 Entrega: ${p.fecha}`);
+    if (p.despensa) L.push(`📦 ${p.despensaQuantity || 1}x ${p.despensa}`);
+    (p.deletedProducts || []).forEach((d) => L.push(`   ↔️ Cambio: quita ${d.nombre || d}`));
+    const extras = (p.newProducts || []).map((x) => `${x.title}${x.price ? ` ($${x.price})` : ''}`);
+    if (extras.length) L.push(`🛒 ${extras.join(', ')}`);
+    if (p.envio) L.push(`🚚 Envío: $${p.envio}`);
+    L.push('', `💵 *Total: $${p.total || 0}*`, '', '¡Gracias por tu compra! 🙏');
+    return L.join('\n');
+}
+
 async function ejecutarTool(name, input) {
     try {
         if (name === 'buscar_cliente') {
@@ -298,7 +314,12 @@ async function ejecutarTool(name, input) {
             };
             const base = `http://127.0.0.1:${process.env.PORT || 3000}`;
             const { data } = await axios.post(`${base}/api/pedidos/new`, payload);
-            return { ok: true, pedidoId: (data && data.pedido && data.pedido._id) || null };
+            return {
+                ok: true,
+                pedidoId: (data && data.pedido && data.pedido._id) || null,
+                telefono: payload.telefono,
+                mensajeWhatsApp: buildMensajeWhatsApp(payload),
+            };
         }
         return { error: 'Herramienta desconocida: ' + name };
     } catch (e) {
@@ -324,6 +345,7 @@ router.post('/chat-pedido', async (req, res) => {
         if (!apiMessages.length) return res.status(400).json({ error: 'Sin mensaje.' });
 
         const system = SYSTEM_CHAT + (await getDespensasCtx());
+        const pedidosCreados = [];
 
         let guard = 0;
         while (guard++ < 8) {
@@ -342,7 +364,13 @@ router.post('/chat-pedido', async (req, res) => {
             for (const b of resp.content) {
                 if (b.type === 'tool_use') {
                     const r = await ejecutarTool(b.name, b.input);
-                    results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(r) });
+                    let forModel = r;
+                    if (b.name === 'crear_pedido' && r.ok) {
+                        pedidosCreados.push({ pedidoId: r.pedidoId, telefono: r.telefono, mensajeWhatsApp: r.mensajeWhatsApp });
+                        // Al modelo le basta el ok+id (no reenviamos el mensaje para no gastar tokens ni que lo repita).
+                        forModel = { ok: true, pedidoId: r.pedidoId };
+                    }
+                    results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(forModel) });
                 }
             }
             apiMessages.push({ role: 'user', content: results });
@@ -350,7 +378,7 @@ router.post('/chat-pedido', async (req, res) => {
 
         const last = apiMessages[apiMessages.length - 1] || {};
         const reply = (last.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
-        res.status(200).json({ messages: apiMessages, reply });
+        res.status(200).json({ messages: apiMessages, reply, pedidosCreados });
     } catch (err) {
         console.error('❌ chat-pedido error:', err);
         res.status(500).json({ error: err.message || 'Error en el chat de pedidos' });
