@@ -6,19 +6,38 @@ const { askVision } = require('../utils/ai');
 // Limpia un teléfono a 10 dígitos (quita lada 52), igual que el resto del backend.
 const limpiarTel = (t) => String(t || '').replace(/\D/g, '').replace(/^52/, '');
 
-const SYSTEM_PARSE_PEDIDO = `Eres el asistente de captura de pedidos de "Fresh Market", una tienda de despensas y abarrotes a domicilio en Pachuca, México.
-Tu trabajo: leer capturas de conversaciones de WhatsApp y/o texto que te pasa un operador, y extraer el/los pedidos en el formato JSON indicado.
+const SYSTEM_PARSE_PEDIDO = `Eres el asistente de captura de pedidos de "Fresh Market", tienda de despensas y abarrotes a domicilio en Pachuca, México.
+Tu trabajo: leer capturas de conversaciones de WhatsApp y/o texto de un operador y extraer el/los pedidos en el JSON indicado.
 
-Reglas:
-- Una conversación/imagen puede contener VARIOS pedidos (de distintos clientes o fechas). Devuélvelos todos en "pedidos".
-- "despensa" es el nombre del paquete de despensa que pide el cliente si lo menciona (ej. "Especial", "Familiar"); si solo pide productos sueltos, deja "despensa" en "" y pon "despensaQuantity" en 0.
-- "productos" son los artículos sueltos o extras que pide (nombre + cantidad). Si no hay, arreglo vacío.
-- "clienteNombre", "telefono", "direccion", "colonia": extráelos del texto o la imagen si aparecen (ej. "Dolores Pedraza de la colonia Lindavista"). Lo que no encuentres, déjalo en "".
-- "fecha": si mencionan un día/fecha de entrega, ponla tal cual; si no, "".
-- "total": si aparece un total en pesos, ponlo como número; si no, 0.
-- "nota": cualquier indicación especial (sin timbre, tocar el portón, etc.).
-- "confianza": "alta" | "media" | "baja" según qué tan claro estaba el pedido.
-- NO inventes datos. Si algo no está, déjalo vacío/0. El operador revisará y completará.`;
+REGLAS DEL NEGOCIO (importantes para partir bien el pedido):
+- Una DESPENSA es un paquete a precio fijo. El cliente puede hacer HASTA 3 CAMBIOS: quitar un
+  producto que trae el paquete y poner otro en su lugar. Regístralos en "cambios" como
+  {quita, pone}. Los cambios NO bajan el precio: la despensa siempre cuesta al menos su precio base.
+- Si el cliente pide la despensa Y ADEMÁS productos extra (más allá de los 3 cambios), esos
+  extras van en un pedido APARTE de tipo "pedido" (personalizado, sin despensa, solo extras).
+  En ese caso devuelve DOS entradas en "pedidos": una tipo "despensa" (con sus "cambios") y otra
+  tipo "pedido" (con los extras en "productos").
+- Si el cliente NO pide despensa, solo productos, es un único pedido tipo "pedido".
+- MÍNIMO: un pedido de extras (tipo "pedido") normalmente debe sumar al menos $320. Si el mismo
+  cliente también lleva una despensa (o el total entre sus pedidos ya cubre el mínimo), la regla
+  se cumple. Si un pedido de extras queda por debajo de $320 y NO hay otra despensa/pedido que lo
+  cubra, pon "alertaMinimo": true y en "aviso" escribe algo como "No llega a $320: preguntar al
+  admin si se cobra envío extra".
+
+CAMPOS:
+- Una conversación/imagen puede traer VARIOS clientes/pedidos. Devuélvelos todos en "pedidos".
+- "tipo": "despensa" o "pedido".
+- "despensa": nombre EXACTO de la despensa (de la lista que te doy) si aplica; si no, "".
+- "despensaQuantity": cuántas de esa despensa (normalmente 1); 0 si es tipo "pedido".
+- "cambios": swaps dentro de la despensa (máx 3). Si no hay, arreglo vacío.
+- "productos": extras/artículos sueltos (nombre + cantidad). Si no hay, arreglo vacío.
+- "clienteNombre","telefono","direccion","colonia": del texto o imagen si aparecen. Lo que no esté, "".
+- "fecha": día/fecha de entrega si la mencionan; si no, "".
+- "total": total en pesos si aparece; si no, 0.
+- "nota": indicaciones especiales (sin timbre, tocar el portón, etc.).
+- "alertaMinimo"/"aviso": según la regla de mínimo de arriba.
+- "confianza": "alta" | "media" | "baja".
+- NO inventes datos. Lo que no esté, vacío/0. El operador revisa y completa.`;
 
 const PEDIDO_SCHEMA = {
     type: 'object',
@@ -30,12 +49,25 @@ const PEDIDO_SCHEMA = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                    tipo: { type: 'string' }, // "despensa" | "pedido"
                     clienteNombre: { type: 'string' },
                     telefono: { type: 'string' },
                     direccion: { type: 'string' },
                     colonia: { type: 'string' },
                     despensa: { type: 'string' },
                     despensaQuantity: { type: 'number' },
+                    cambios: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            properties: {
+                                quita: { type: 'string' },
+                                pone: { type: 'string' },
+                            },
+                            required: ['quita', 'pone'],
+                        },
+                    },
                     productos: {
                         type: 'array',
                         items: {
@@ -51,11 +83,14 @@ const PEDIDO_SCHEMA = {
                     nota: { type: 'string' },
                     fecha: { type: 'string' },
                     total: { type: 'number' },
+                    alertaMinimo: { type: 'boolean' },
+                    aviso: { type: 'string' },
                     confianza: { type: 'string' },
                 },
                 required: [
-                    'clienteNombre', 'telefono', 'direccion', 'colonia', 'despensa',
-                    'despensaQuantity', 'productos', 'nota', 'fecha', 'total', 'confianza',
+                    'tipo', 'clienteNombre', 'telefono', 'direccion', 'colonia', 'despensa',
+                    'despensaQuantity', 'cambios', 'productos', 'nota', 'fecha', 'total',
+                    'alertaMinimo', 'aviso', 'confianza',
                 ],
             },
         },
