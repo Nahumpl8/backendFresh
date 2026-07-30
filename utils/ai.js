@@ -5,7 +5,9 @@
 const Anthropic = require('@anthropic-ai/sdk');
 
 const client = new Anthropic(); // lee ANTHROPIC_API_KEY del env
-const MODEL = 'claude-opus-4-8';
+// Haiku 4.5: barato y con buena visión para leer capturas. (Subir a sonnet/opus si una
+// feature necesita más precisión.) OJO: Haiku 4.5 NO soporta adaptive thinking ni effort.
+const MODEL = 'claude-haiku-4-5';
 
 /**
  * Llama a Claude con visión (imágenes) y/o texto y devuelve JSON validado por schema.
@@ -35,7 +37,8 @@ async function askVision({ images = [], text = '', systemPrompt = '', schema } =
     const req = {
         model: MODEL,
         max_tokens: 16000,
-        thinking: { type: 'adaptive' },
+        // Sin 'thinking': Haiku 4.5 no soporta adaptive; para extracción estructurada no
+        // hace falta razonar largo y así abaratamos los tokens de salida.
         messages: [{ role: 'user', content }],
     };
     if (systemPrompt) req.system = systemPrompt;
