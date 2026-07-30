@@ -14,6 +14,10 @@ const ProductSchema = new mongoose.Schema({
     showInWeb:{type: Boolean, default:true},
     cost:{type: Number, required:false},
     proveedor:{type: String, required:false},
+    // Descomposición de combos/promos para la lista de compras por proveedor.
+    // Ej: "PROMO de 1 kg naranja y 1 piña" -> [{nombre:'Naranja',cantidad:1,unidad:'kg',proveedor:'Central'}, ...]
+    // Se genera con IA la 1a vez y se cachea aquí para no volver a llamarla.
+    componentes:{type: Array, required:false},
     },
     {timestamps:true}
 );

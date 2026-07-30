@@ -646,4 +646,110 @@ router.post('/chat-prefill', async (req, res) => {
     }
 });
 
+// ============================================================================
+// Consolidar lista de compras: descompone combos/promos en sus productos reales
+// (mapeados a un producto del catálogo + su proveedor). Cachea el resultado en
+// Product.componentes para NO volver a llamar a la IA por el mismo combo.
+// ============================================================================
+const SCHEMA_CONSOLIDAR = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['recetas'],
+    properties: {
+        recetas: {
+            type: 'array',
+            items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['titulo', 'componentes'],
+                properties: {
+                    titulo: { type: 'string' },
+                    componentes: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            required: ['nombre', 'cantidad', 'unidad', 'proveedor'],
+                            properties: {
+                                nombre: { type: 'string' },
+                                cantidad: { type: 'number' },
+                                unidad: { type: 'string' },
+                                proveedor: { type: 'string' },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+};
+
+const SYSTEM_CONSOLIDAR = `Eres el asistente de compras de "Fresh Market". Te doy títulos de productos "combo/promo"
+y debes DESCOMPONERLOS en los productos reales que contienen, mapeando cada uno a un producto del catálogo.
+
+REGLAS:
+- Un combo junta 2+ productos, ej: "PROMO de 1 kg naranja y 1 piña" = 1 kg de Naranja + 1 pieza de Piña.
+- Para CADA componente devuelve: "nombre" (usa EXACTAMENTE el nombreSinUnidades de un producto del catálogo),
+  "cantidad" (número), "unidad" ("kg", "g" o "pza") y "proveedor" (el proveedor de ese producto en el catálogo).
+- Parsea la cantidad/unidad del texto ("1 kg naranja" -> cantidad 1, unidad kg; "1 piña" -> cantidad 1, unidad pza;
+  "250gr queso Oaxaca" -> cantidad 250, unidad g).
+- Si el título es UN SOLO producto (no un combo), devuelve 1 componente (él mismo) mapeado al catálogo.
+- Si NO puedes mapear con seguridad un componente a un producto del catálogo, o no sabes su proveedor, o el
+  texto es una instrucción (ej. "SEPARAR CARNES ROJAS") o basura, devuelve componentes: [] para ese título.
+  NUNCA inventes un proveedor ni un producto que no esté en el catálogo.
+- "unidad" debe ser exactamente "kg", "g" o "pza".`;
+
+router.post('/consolidar-compras', async (req, res) => {
+    try {
+        const titulos = Array.isArray(req.body?.titulos) ? req.body.titulos.filter(Boolean).slice(0, 100) : [];
+        if (!titulos.length) return res.status(400).json({ error: 'Sin títulos.' });
+
+        // 1) Cargar productos por título y separar cacheados vs pendientes
+        const prods = await Product.find({ title: { $in: titulos } });
+        const byTitle = {};
+        prods.forEach(p => { byTitle[p.title] = p; });
+
+        const recetas = {};
+        const pendientes = [];
+        for (const t of titulos) {
+            const p = byTitle[t];
+            if (p && Array.isArray(p.componentes) && p.componentes.length > 0) {
+                recetas[t] = p.componentes;
+            } else {
+                pendientes.push(t);
+            }
+        }
+
+        // 2) Descomponer los pendientes con IA (una sola llamada)
+        if (pendientes.length) {
+            const catalogo = await Product.find({}).select('nombreSinUnidades title proveedor unit');
+            const catStr = catalogo
+                .filter(c => c.proveedor)
+                .map(c => `${c.nombreSinUnidades || c.title} | ${c.unit || ''} | ${c.proveedor}`)
+                .join('\n');
+            const text = `CATÁLOGO (nombreSinUnidades | unidad | proveedor):\n${catStr}\n\n`
+                + `TÍTULOS A DESCOMPONER:\n${pendientes.map(t => `- ${t}`).join('\n')}`;
+
+            const { data } = await askVision({ text, systemPrompt: SYSTEM_CONSOLIDAR, schema: SCHEMA_CONSOLIDAR });
+            const arr = (data && Array.isArray(data.recetas)) ? data.recetas : [];
+            const outByTitulo = {};
+            arr.forEach(r => { if (r && r.titulo) outByTitulo[r.titulo] = Array.isArray(r.componentes) ? r.componentes : []; });
+
+            for (const t of pendientes) {
+                const comps = outByTitulo[t] || [];
+                recetas[t] = comps;
+                // Cachear solo si hubo descomposición válida (>=1 componente) y el producto existe
+                if (comps.length > 0 && byTitle[t]) {
+                    try { await Product.updateOne({ _id: byTitle[t]._id }, { $set: { componentes: comps } }); } catch (_) {}
+                }
+            }
+        }
+
+        res.status(200).json({ recetas });
+    } catch (err) {
+        console.error('❌ consolidar-compras error:', err);
+        res.status(500).json({ error: err.message || 'Error consolidando' });
+    }
+});
+
 module.exports = router;
