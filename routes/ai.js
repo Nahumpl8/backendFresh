@@ -29,7 +29,7 @@ Tu trabajo: leer capturas de conversaciones de WhatsApp y/o texto de un operador
 REGLAS DEL NEGOCIO (importantes para partir bien el pedido):
 - Una DESPENSA es un paquete a precio fijo. El cliente puede hacer HASTA 3 CAMBIOS: quitar un
   producto que trae el paquete y poner otro en su lugar. Regístralos en "cambios" como
-  {quita, pone}. Los cambios NO bajan el precio: la despensa siempre cuesta al menos su precio base.
+  {quita, pone}. QUITAR un producto RESTA su precio y el que se PONE lo SUMA (total = precio de la despensa − quitados + puestos/extras).
 - Si el cliente pide la despensa Y ADEMÁS productos extra (más allá de los 3 cambios), esos
   extras van en un pedido APARTE de tipo "pedido" (personalizado, sin despensa, solo extras).
   En ese caso devuelve DOS entradas en "pedidos": una tipo "despensa" (con sus "cambios") y otra
@@ -185,7 +185,7 @@ FLUJO:
    copiarlo y enviarlo al cliente automáticamente.
 
 REGLAS DEL NEGOCIO:
-- Una DESPENSA es un paquete a precio fijo con HASTA 3 CAMBIOS (quita un producto, pon otro). Los cambios NO bajan el precio. Manda los "quita" en deletedProducts y los "pone" en newProducts.
+- Una DESPENSA es un paquete con HASTA 3 CAMBIOS (quita un producto, pon otro). QUITAR resta el precio del producto quitado y PONER lo suma. Manda los "quita" en deletedProducts y los "pone" en newProducts.
 - Despensa + extras (más allá de los cambios) = DOS pedidos: uno con la despensa y otro tipo "pedido" (despensa "" y despensaQuantity 0) con los extras en newProducts.
 - Solo productos, sin despensa = un pedido con despensa "".
 - MÍNIMO $320 (SOLO pedidos personalizados): una DESPENSA cumple SIEMPRE, sin importar su precio — NO le apliques mínimo. El mínimo de $320 aplica únicamente a pedidos PERSONALIZADOS (tipo "pedido", sin despensa). Un personalizado debe llegar a $320; si el mismo cliente hace 2 personalizados el mismo día pueden ser de $160 c/u (160+160=320). Solo si un personalizado no llega a $320 y no hay otro pedido/despensa del día que lo cubra, avisa y pregunta si se cobra envío extra. NUNCA bloquees ni alertes por el monto de una despensa.
@@ -569,7 +569,7 @@ FLUJO:
 2. Cuando tengas todo CLARO y sin ambigüedad, llama prellenar_formulario y luego EXPLICA en 2-4 líneas qué llenaste: despensa, cambios (quita/pone), extras con precio, total y fecha. Invita al operador a corregir si algo está mal.
 3. Si el operador pide un cambio, ajusta y vuelve a llamar prellenar_formulario.
 
-REGLAS: una despensa admite hasta 3 cambios (quita/pone, no baja el precio); extras van aparte; MÍNIMO $320 solo para pedidos personalizados (sin despensa), las despensas cumplen siempre. Si el pedido es PERSONALIZADO (solo productos, sin despensa de paquete), el sistema lo registra automáticamente como despensa "Pedido" — tú solo deja despensaName vacío y pon los productos en extras. Responde en español, breve.`;
+REGLAS: una despensa admite hasta 3 cambios; QUITAR un producto RESTA su precio y PONER/EXTRA lo SUMA (total = precio despensa − quitados + extras); MÍNIMO $320 solo para pedidos personalizados (sin despensa), las despensas cumplen siempre. Si el pedido es PERSONALIZADO (solo productos, sin despensa de paquete), el sistema lo registra automáticamente como despensa "Pedido" — deja despensaName vacío y pon los productos en extras. Responde en español, breve.`;
 
 const PRELLENAR_TOOLS = [
     TOOLS.find((t) => t.name === 'buscar_cliente'),
