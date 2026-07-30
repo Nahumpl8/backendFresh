@@ -18,11 +18,13 @@ REGLAS DEL NEGOCIO (importantes para partir bien el pedido):
   En ese caso devuelve DOS entradas en "pedidos": una tipo "despensa" (con sus "cambios") y otra
   tipo "pedido" (con los extras en "productos").
 - Si el cliente NO pide despensa, solo productos, es un único pedido tipo "pedido".
-- MÍNIMO: un pedido de extras (tipo "pedido") normalmente debe sumar al menos $320. Si el mismo
-  cliente también lleva una despensa (o el total entre sus pedidos ya cubre el mínimo), la regla
-  se cumple. Si un pedido de extras queda por debajo de $320 y NO hay otra despensa/pedido que lo
-  cubra, pon "alertaMinimo": true y en "aviso" escribe algo como "No llega a $320: preguntar al
-  admin si se cobra envío extra".
+- MÍNIMO ($320 por día): el mínimo aplica al TOTAL de los pedidos de un mismo cliente PARA EL
+  MISMO DÍA de entrega, que debe sumar al menos $320. CUMPLEN la regla, por ejemplo: un pedido de
+  $320 o más; una despensa; o DOS pedidos del mismo día de $160 cada uno (160+160 = 320). Solo si
+  el total del cliente para ese día queda POR DEBAJO de $320 y no hay una despensa/otro pedido que
+  lo cubra, pon "alertaMinimo": true en el/los pedidos afectados y en "aviso" escribe algo como
+  "El total del día no llega a $320: preguntar al admin si se cobra envío extra". Si el total del
+  día sí llega (aunque sea con 2 pedidos de $160), NO pongas alerta.
 
 CAMPOS:
 - Una conversación/imagen puede traer VARIOS clientes/pedidos. Devuélvelos todos en "pedidos".
