@@ -469,6 +469,13 @@ async function resolverPedido(data, { despensas, fechasList }, telefonoOperador)
         else noEncontrados.push(e.productId);
     }
 
+    // Personalizado (sin despensa de paquete, solo extras): se registra como despensa "Pedido".
+    let esPedidoContainer = false;
+    if (!despensa && newProducts.length > 0) {
+        const pedidoDesp = despensas.find((d) => norm(d.name) === 'pedido');
+        if (pedidoDesp) { despensa = { _id: String(pedidoDesp._id), name: pedidoDesp.name, price: 0 }; esPedidoContainer = true; }
+    }
+
     let fechaFinal = data.fecha || '';
     if (fechaFinal && fechasList.length) {
         const exacta = fechasList.find((f) => norm(f) === norm(fechaFinal));
@@ -480,8 +487,8 @@ async function resolverPedido(data, { despensas, fechasList }, telefonoOperador)
         }
     }
 
-    const qty = data.despensaQuantity != null ? data.despensaQuantity : (despensa ? 1 : 0);
-    const totalDespensa = despensa ? (despensa.price || 0) * (qty || 1) : 0;
+    const qty = esPedidoContainer ? 1 : (data.despensaQuantity != null ? data.despensaQuantity : (despensa ? 1 : 0));
+    const totalDespensa = (despensa && !esPedidoContainer) ? (despensa.price || 0) * (qty || 1) : 0;
     const totalQuita = deletedProducts.reduce((a, p) => a + (p.precio || 0), 0);
     const totalExtras = newProducts.reduce((a, p) => a + (p.price || 0), 0);
     const total = Math.max(0, totalDespensa - totalQuita + totalExtras);
@@ -562,7 +569,7 @@ FLUJO:
 2. Cuando tengas todo CLARO y sin ambigüedad, llama prellenar_formulario y luego EXPLICA en 2-4 líneas qué llenaste: despensa, cambios (quita/pone), extras con precio, total y fecha. Invita al operador a corregir si algo está mal.
 3. Si el operador pide un cambio, ajusta y vuelve a llamar prellenar_formulario.
 
-REGLAS: una despensa admite hasta 3 cambios (quita/pone, no baja el precio); extras van aparte; MÍNIMO $320 solo para pedidos personalizados (sin despensa), las despensas cumplen siempre. Responde en español, breve.`;
+REGLAS: una despensa admite hasta 3 cambios (quita/pone, no baja el precio); extras van aparte; MÍNIMO $320 solo para pedidos personalizados (sin despensa), las despensas cumplen siempre. Si el pedido es PERSONALIZADO (solo productos, sin despensa de paquete), el sistema lo registra automáticamente como despensa "Pedido" — tú solo deja despensaName vacío y pon los productos en extras. Responde en español, breve.`;
 
 const PRELLENAR_TOOLS = [
     TOOLS.find((t) => t.name === 'buscar_cliente'),
