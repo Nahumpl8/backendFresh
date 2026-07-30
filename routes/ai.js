@@ -2,7 +2,10 @@ const router = require('express').Router();
 const axios = require('axios');
 const Clientes = require('../models/Clientes');
 const Despensas = require('../models/Despensas');
+const Product = require('../models/Product');
 const { askVision, client } = require('../utils/ai');
+
+const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 
 // Nombres/precios reales de las despensas para inyectar en los prompts.
 async function getDespensasCtx() {
@@ -403,6 +406,156 @@ router.post('/chat-pedido', async (req, res) => {
     } catch (err) {
         console.error('❌ chat-pedido error:', err);
         res.status(500).json({ error: err.message || 'Error en el chat de pedidos' });
+    }
+});
+
+// ============================================================================
+// PREFILL DE PEDIDO — la IA lee el pedido y devuelve los datos ya emparejados
+// con el catálogo (precios reales) para LLENAR el formulario de /pedidos/nuevopedido.
+// El admin revisa y da "Registrar" (reusa toda la lógica del formulario).
+// ============================================================================
+const SYSTEM_PREFILL = `Eres el asistente de captura de Fresh Market (Pachuca). Lee el pedido que te describe el operador (texto y/o imagen) y devuélvelo en el JSON del schema, EMPAREJADO con el catálogo que te doy.
+
+- despensaName: nombre EXACTO de la despensa (de la lista) si el cliente pide una; si es solo productos sueltos, "" y esPersonalizado=true.
+- despensaQuantity: cuántas (normalmente 1); 0 si es personalizado.
+- quita: nombres EXACTOS (de los productos de esa despensa que te listo) que el cliente quiere QUITAR (ej. "no nopales"). Solo de esa despensa.
+- extras: productos que se AGREGAN (los "pone" de un cambio y/o extras sueltos). Usa el "id" EXACTO del catálogo. Si el operador dice un producto que no está en el catálogo, omítelo y menciónalo en "aviso".
+- clienteNombre/telefono/direccion/colonia: del texto/imagen si aparecen; lo que no, "".
+- fecha: día/fecha de entrega si la mencionan; si no, "".
+- MÍNIMO $320 solo para PERSONALIZADOS (sin despensa). Las despensas cumplen siempre. Si un personalizado no llega a $320, ponlo en "aviso".
+- NO inventes. Lo que no sepas, vacío. El operador revisa todo en el formulario.`;
+
+const PREFILL_SCHEMA = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+        clienteNombre: { type: 'string' },
+        telefono: { type: 'string' },
+        direccion: { type: 'string' },
+        colonia: { type: 'string' },
+        despensaName: { type: 'string' },
+        despensaQuantity: { type: 'number' },
+        quita: { type: 'array', items: { type: 'string' } },
+        extras: {
+            type: 'array',
+            items: {
+                type: 'object', additionalProperties: false,
+                properties: { productId: { type: 'string' }, cantidad: { type: 'number' } },
+                required: ['productId', 'cantidad'],
+            },
+        },
+        fecha: { type: 'string' },
+        esPersonalizado: { type: 'boolean' },
+        aviso: { type: 'string' },
+    },
+    required: ['clienteNombre', 'telefono', 'direccion', 'colonia', 'despensaName', 'despensaQuantity', 'quita', 'extras', 'fecha', 'esPersonalizado', 'aviso'],
+};
+
+// POST /api/ai/prefill-pedido  { texto?, images?, telefono? }
+router.post('/prefill-pedido', async (req, res) => {
+    try {
+        const { texto = '', images = [], telefono = '' } = req.body || {};
+        if ((!images || images.length === 0) && !String(texto).trim()) {
+            return res.status(400).json({ error: 'Manda texto o imagen del pedido.' });
+        }
+
+        // Contexto: despensas con sus productos, y catálogo para extras.
+        const despensas = await Despensas.find({ showInWeb: { $ne: false } })
+            .populate('products.productId', 'title nombreSinUnidades price');
+        const catalogo = await Product.find({ showInWeb: { $ne: false }, inStock: { $ne: false } })
+            .select('title price');
+
+        const despensasCtx = despensas.map((d) => {
+            const prods = (d.products || [])
+                .map((p) => (p.productId ? (p.productId.nombreSinUnidades || p.productId.title) : null))
+                .filter(Boolean);
+            return `Despensa "${d.name}" ($${d.price}) — productos: ${prods.join(', ')}`;
+        }).join('\n');
+        const catalogoCtx = catalogo.map((p) => `${p._id}|${p.title}|$${p.price}`).join('\n');
+
+        const system = `${SYSTEM_PREFILL}\n\n== DESPENSAS ==\n${despensasCtx}\n\n== CATÁLOGO (id|producto|precio) ==\n${catalogoCtx}`;
+
+        const userText = [
+            texto ? `Pedido del operador: ${texto}` : '',
+            telefono ? `Teléfono del cliente: ${telefono}` : '',
+            'Devuelve el pedido emparejado en el JSON del schema.',
+        ].filter(Boolean).join('\n');
+
+        // Sonnet para el emparejamiento con el catálogo.
+        const contentBlocks = [];
+        for (const img of images) if (img && img.dataBase64) contentBlocks.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType || 'image/jpeg', data: img.dataBase64 } });
+        contentBlocks.push({ type: 'text', text: userText });
+
+        const resp = await client.messages.create({
+            model: 'claude-sonnet-5',
+            max_tokens: 4000,
+            system,
+            output_config: { format: { type: 'json_schema', schema: PREFILL_SCHEMA } },
+            messages: [{ role: 'user', content: contentBlocks }],
+        });
+        try { console.log('🤖 prefill usage:', JSON.stringify(resp.usage)); } catch (_) {}
+        if (resp.stop_reason === 'refusal') return res.status(200).json({ error: 'La IA rechazó la solicitud.' });
+        const txt = (resp.content || []).find((b) => b.type === 'text');
+        let data;
+        try { data = JSON.parse(txt ? txt.text : '{}'); } catch (e) { return res.status(500).json({ error: 'Respuesta IA inválida' }); }
+
+        // Resolver despensa + productos con precios reales.
+        let despensa = null, despensaProducts = [], deletedProducts = [];
+        if (data.despensaName) {
+            despensa = despensas.find((d) => norm(d.name) === norm(data.despensaName))
+                || despensas.find((d) => norm(d.name).includes(norm(data.despensaName)));
+            if (despensa) {
+                despensaProducts = (despensa.products || []).map((p, i) => ({
+                    id: (p.productId && p.productId._id) ? String(p.productId._id) : `item-${i}`,
+                    nombre: p.productId ? (p.productId.nombreSinUnidades || p.productId.title) : '',
+                    precio: (p.productId && p.productId.price) || 0,
+                    cantidad: p.cantidad, unidad: p.unidad,
+                }));
+                deletedProducts = (data.quita || [])
+                    .map((q) => despensaProducts.find((dp) => norm(dp.nombre) === norm(q) || norm(dp.nombre).includes(norm(q))))
+                    .filter(Boolean);
+            }
+        }
+
+        // Resolver extras con el catálogo (por id; fallback por título).
+        const newProducts = [];
+        for (const e of (data.extras || [])) {
+            let prod = null;
+            try { prod = await Product.findById(e.productId).select('title price'); } catch (_) {}
+            if (prod) newProducts.push({ _id: String(prod._id), title: prod.title, price: prod.price || 0 });
+        }
+
+        const qty = data.despensaQuantity || (despensa ? 1 : 0);
+        const totalDespensa = despensa ? (despensa.price || 0) * (qty || 1) : 0;
+        const totalQuita = deletedProducts.reduce((a, p) => a + (p.precio || 0), 0);
+        const totalExtras = newProducts.reduce((a, p) => a + (p.price || 0), 0);
+        const total = Math.max(0, totalDespensa - totalQuita + totalExtras);
+
+        // Cliente por teléfono.
+        const tel = limpiarTel(telefono) || limpiarTel(data.telefono);
+        let cliente = null;
+        if (tel && tel.length >= 10) cliente = await Clientes.findOne({ telefono: { $regex: tel.slice(-10) + '$' } });
+
+        res.status(200).json({
+            clienteEncontrado: !!cliente,
+            cliente,
+            clienteNombre: data.clienteNombre || '',
+            telefono: tel || data.telefono || '',
+            direccion: data.direccion || '',
+            colonia: data.colonia || '',
+            despensa: despensa ? { _id: String(despensa._id), name: despensa.name, price: despensa.price } : null,
+            despensaProducts, // candidatos para el select de "eliminar"
+            despensaQuantity: qty,
+            deletedProducts,  // ya quitados
+            newProducts,      // extras
+            fecha: data.fecha || '',
+            total,
+            aviso: data.aviso || '',
+            usage: resp.usage,
+        });
+    } catch (err) {
+        console.error('❌ prefill-pedido error:', err);
+        res.status(500).json({ error: err.message || 'Error leyendo el pedido' });
     }
 });
 
