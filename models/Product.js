@@ -13,7 +13,8 @@ const ProductSchema = new mongoose.Schema({
     inStock:{type: Boolean, default:true},
     showInWeb:{type: Boolean, default:true},
     cost:{type: Number, required:false},
-    }, 
+    proveedor:{type: String, required:false},
+    },
     {timestamps:true}
 );
 
