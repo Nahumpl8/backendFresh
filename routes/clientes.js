@@ -5,10 +5,17 @@ const Pedido = require('../models/Pedidos');
 const WalletDevice = require('../models/WalletDevice');
 const { sendWelcomeEmail } = require('../utils/emailService');
 const { inferEnvioDireccion } = require('../utils/envioZonas');
+const { envioPorColonia } = require('./coloniasEnvio');
 
 // Utilidad para limpiar teléfono
 function limpiarTelefono(tel) {
     return tel.replace(/\D/g, '').replace(/^52/, '').trim();
+}
+
+// Teléfono canónico: solo dígitos, últimos 10 (quita lada 52 y cualquier prefijo).
+function telCanonico(tel) {
+    const d = String(tel || '').replace(/\D/g, '');
+    return d.length > 10 ? d.slice(-10) : d;
 }
 
 // Utilidad para normalizar texto
@@ -116,21 +123,49 @@ router.post('/new', async (req, res) => {
     // Normalizamos email si viene
     if (req.body.email) req.body.email = req.body.email.toLowerCase().trim();
 
+    // 🔒 DEDUP POR TELÉFONO: normaliza y verifica que no exista ya (evita clientes dobles
+    // con el mismo número en otro formato). Si existe -> 409, la web manda a iniciar sesión.
+    const canon = telCanonico(req.body.telefono);
+    if (!canon || canon.length < 10) {
+        return res.status(400).json({ error: 'Teléfono inválido (se requieren 10 dígitos).' });
+    }
+    const existente = await Clientes.findOne({ telefono: { $regex: canon + '$' } });
+    if (existente) {
+        return res.status(409).json({
+            error: 'Ya existe una cuenta con este número.',
+            existe: true,
+            tienePin: !!existente.pin,
+            nombre: existente.nombre,
+        });
+    }
+    req.body.telefono = canon; // guarda el teléfono canónico (10 dígitos)
+
+    // 📍 ENVÍO por colonia estructurada (clientes nuevos): si viene colonia/cp y no un
+    // costoEnvio explícito, lo calcula desde el panel de colonias.
+    if (req.body.colonia && !req.body.costoEnvio) {
+        try {
+            const envio = await envioPorColonia(req.body.cp, req.body.colonia);
+            if (envio) { req.body.costoEnvio = envio.costoEnvio; req.body.gratisJueves = envio.gratisJueves; }
+        } catch (e) { console.warn('envioPorColonia (new):', e.message); }
+    }
+
     const newClientes = new Clientes(req.body);
     try {
         const savedClientes = await newClientes.save();
 
-        // 👇 AGREGAR ESTO: Enviar correo si se registró con email
         if (savedClientes.email) {
             console.log("📧 Enviando bienvenida a usuario nuevo...");
             sendWelcomeEmail(savedClientes.email, savedClientes.nombre, savedClientes._id.toString())
                 .catch(err => console.error('Error welcome email (new):', err));
         }
-        // 👆 FIN DE LO AGREGADO
 
         res.status(201).json(savedClientes);
     } catch (err) {
         console.error(err);
+        // Índice único de teléfono/email -> 409 en vez de 500 genérico
+        if (err.code === 11000) {
+            return res.status(409).json({ error: 'Ya existe una cuenta con ese número o correo.', existe: true });
+        }
         res.status(500).json(err);
     }
 });
@@ -621,7 +656,7 @@ router.get('/search', async (req, res) => {
 // Agregar dirección extra
 router.put('/add-address/:id', async (req, res) => {
     try {
-        const { alias, direccion, gpsLink, costoEnvio, gratisJueves } = req.body;
+        const { alias, direccion, gpsLink, costoEnvio, gratisJueves, colonia, cp } = req.body;
         if (!direccion) return res.status(400).json("Falta la dirección");
 
         // Auto-envío: si no viene costoEnvio explícito, inferirlo por la colonia
@@ -629,14 +664,21 @@ router.put('/add-address/:id', async (req, res) => {
             alias: alias || 'Nueva Dirección',
             direccion: direccion,
             gpsLink: gpsLink || '',
+            colonia: colonia || '',
+            cp: cp || '',
             costoEnvio: Number(costoEnvio) || 0,
             gratisJueves: !!gratisJueves,
         };
         if (!nuevaDireccion.costoEnvio) {
-            const zona = inferEnvioDireccion({ alias, direccion });
-            if (zona) {
-                nuevaDireccion.costoEnvio = zona.costoEnvio;
-                nuevaDireccion.gratisJueves = zona.gratisJueves;
+            // Preferir el panel de colonias (colonia/cp estructurados); si no, fallback a keywords.
+            let envio = null;
+            if (colonia) {
+                try { envio = await envioPorColonia(cp, colonia); } catch (e) { console.warn('envioPorColonia (add-address):', e.message); }
+            }
+            if (!envio) envio = inferEnvioDireccion({ alias, direccion });
+            if (envio) {
+                nuevaDireccion.costoEnvio = envio.costoEnvio;
+                nuevaDireccion.gratisJueves = envio.gratisJueves;
             }
         }
 

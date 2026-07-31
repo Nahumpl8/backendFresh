@@ -14,6 +14,10 @@ const ClienteSchema = new mongoose.Schema({
     costoEnvio: { type: Number, default: 0 },          // Costo de envío de la dirección principal
     gratisJueves: { type: Boolean, default: false },   // Zona azul: gratis los jueves
 
+    // --- 📍 DIRECCIÓN ESTRUCTURADA (solo clientes nuevos; los viejos quedan en texto libre) ---
+    colonia: { type: String, default: '' },
+    cp: { type: String, default: '' },
+
     // Auth (Opcionales)
     email: {
         type: String,
@@ -33,6 +37,8 @@ const ClienteSchema = new mongoose.Schema({
         alias: String,
         direccion: String,
         gpsLink: String,
+        colonia: { type: String, default: '' },
+        cp: { type: String, default: '' },
         costoEnvio: { type: Number, default: 0 },        // Costo de envío de esta dirección
         gratisJueves: { type: Boolean, default: false }  // Zona azul: gratis los jueves
     }],
