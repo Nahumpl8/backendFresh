@@ -689,14 +689,27 @@ y debes DESCOMPONERLOS en los productos reales que contienen, mapeando cada uno 
 
 REGLAS:
 - Un combo junta 2+ productos, ej: "PROMO de 1 kg naranja y 1 piña" = 1 kg de Naranja + 1 pieza de Piña.
-- Para CADA componente devuelve: "nombre" (usa EXACTAMENTE el nombreSinUnidades de un producto del catálogo),
-  "cantidad" (número), "unidad" ("kg", "g" o "pza") y "proveedor" (el proveedor de ese producto en el catálogo).
+- Para CADA componente devuelve: "nombre", "cantidad" (número), "unidad" ("kg", "g" o "pza") y "proveedor".
 - Parsea la cantidad/unidad del texto ("1 kg naranja" -> cantidad 1, unidad kg; "1 piña" -> cantidad 1, unidad pza;
   "250gr queso Oaxaca" -> cantidad 250, unidad g).
-- Si el título es UN SOLO producto (no un combo), devuelve 1 componente (él mismo) mapeado al catálogo.
-- Si NO puedes mapear con seguridad un componente a un producto del catálogo, o no sabes su proveedor, o el
-  texto es una instrucción (ej. "SEPARAR CARNES ROJAS") o basura, devuelve componentes: [] para ese título.
-  NUNCA inventes un proveedor ni un producto que no esté en el catálogo.
+- Si el título es UN SOLO producto (no un combo), devuelve 1 componente (él mismo).
+
+NOMBRE del componente (MUY IMPORTANTE):
+- ⛔ PROHIBIDO SUSTITUIR un componente por un producto DIFERENTE. "Carne de res" NO es "Maciza de cerdo";
+  res ≠ cerdo ≠ pollo; un corte NO es otro corte; jamás cambies el tipo de carne, animal o producto solo
+  porque "se parece" o porque el otro sí está en el catálogo. Si lo haces, arruinas la lista de compras.
+- Si el producto del título coincide con uno del catálogo, usa EXACTAMENTE ese nombreSinUnidades.
+- Si el producto del título NO está en el catálogo pero su nombre es claro (ej. "carne de res en trozo"),
+  usa el NOMBRE LITERAL tal como viene en el título. NO lo cambies por otro producto.
+
+PROVEEDOR:
+- Si el producto está en el catálogo, usa su proveedor.
+- Si NO está pero puedes deducir el proveedor por la FAMILIA con evidencia del catálogo (ej. todos los cortes
+  "... de res" y "... de cerdo" comparten un mismo proveedor en el catálogo), usa ese proveedor.
+- Si el proveedor NO es evidente, o el texto es una instrucción ("SEPARAR CARNES ROJAS") o basura,
+  devuelve componentes: [] para ese título (mejor dejarlo para revisión manual que adivinar mal).
+- NUNCA inventes un proveedor que no aparezca en el catálogo.
+
 - "unidad" debe ser exactamente "kg", "g" o "pza".`;
 
 router.post('/consolidar-compras', async (req, res) => {
