@@ -748,8 +748,26 @@ router.post('/consolidar-compras', async (req, res) => {
             const outByTitulo = {};
             arr.forEach(r => { if (r && r.titulo) outByTitulo[r.titulo] = Array.isArray(r.componentes) ? r.componentes : []; });
 
+            // Red de seguridad determinista: si algún componente NO comparte palabra significativa con
+            // el título del combo, la IA probablemente alucinó -> descartamos la receta completa (queda
+            // como [] -> el combo cae en "Revisar"). "Si hay duda, mejor Revisar" y no cachear basura.
+            const STOP = new Set(['promo', 'cupon', 'gramos', 'gr', 'kg', 'kilo', 'kilos', 'pza', 'pzas', 'pieza', 'piezas', 'penca', 'de', 'del', 'con', 'para']);
+            const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+            const palabras = (s) => norm(s).split(/[^a-z0-9]+/).filter(w => w.length >= 4 && !STOP.has(w));
+            const recetaConfiable = (titulo, comps) => {
+                const tit = new Set(palabras(titulo));
+                return (comps || []).every(c => {
+                    const cw = palabras(c && c.nombre);
+                    return cw.length === 0 || cw.some(w => tit.has(w));
+                });
+            };
+
             for (const t of pendientes) {
-                const comps = outByTitulo[t] || [];
+                let comps = outByTitulo[t] || [];
+                if (comps.length > 0 && !recetaConfiable(t, comps)) {
+                    console.warn(`⚠️ consolidar-compras: receta sospechosa descartada para "${t}": ${JSON.stringify(comps)}`);
+                    comps = [];
+                }
                 recetas[t] = comps;
                 // Cachear solo si hubo descomposición válida (>=1 componente) y el producto existe
                 if (comps.length > 0 && byTitle[t]) {
