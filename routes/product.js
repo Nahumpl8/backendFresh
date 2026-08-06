@@ -6,7 +6,10 @@ const { extractNameFromTitle } = require('../utils/extractName');
 //CREATE
 
 router.post('/', async (req, res) => {
-    if (req.body.title && !req.body.nombreSinUnidades) {
+    // Siempre derivar nombreSinUnidades del título (igual que el PUT). Antes solo se derivaba si
+    // no venía en el body, por lo que al DUPLICAR un producto se copiaba el nombre viejo y quedaba
+    // desalineado del título (ej. Milanesa con nombreSinUnidades "Pierna de cerdo sin hueso").
+    if (req.body.title) {
         req.body.nombreSinUnidades = extractNameFromTitle(req.body.title);
     }
     const newProduct = new Product(req.body);

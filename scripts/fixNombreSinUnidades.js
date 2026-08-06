@@ -23,6 +23,7 @@ const CAMBIOS = [
     { title: '500gr de Camarón fresco chico $105', nombreSinUnidades: 'Camarón fresco chico' },
     { title: '500gr de Camarón fresco grande $120', nombreSinUnidades: 'Camarón fresco grande' },
     { title: '500gr Cecina de res $120', nombreSinUnidades: 'Cecina de res' },
+    { title: '1 Kg de Huevo ORGANICO ♻️ $60', nombreSinUnidades: 'Huevo ORGANICO ♻️' },
 ];
 
 (async () => {
