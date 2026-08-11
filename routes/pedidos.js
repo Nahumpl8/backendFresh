@@ -450,10 +450,31 @@ router.get('/find/:id', async (req, res) => {
 });
 
 // OBTENER PEDIDOS POR CLIENTE
+// Sin ?page  -> array completo (comportamiento legacy, lo usan BuenoPedidos/PedidosNuevo/tienda).
+// Con ?page  -> paginado { data, total, hasMore }, emparejando por últimos 10 dígitos del teléfono.
 router.get('/cliente/:telefono', async (req, res) => {
     try {
-        const pedidos = await Pedido.find({ telefono: req.params.telefono }).sort({ createdAt: -1 });
-        res.status(200).json(pedidos);
+        const { page, limit } = req.query;
+
+        if (!page) {
+            const pedidos = await Pedido.find({ telefono: req.params.telefono }).sort({ createdAt: -1 });
+            return res.status(200).json(pedidos);
+        }
+
+        const tel10 = String(req.params.telefono).replace(/\D/g, '').slice(-10);
+        const query = tel10.length === 10
+            ? { telefono: { $regex: tel10 + '$' } }
+            : { telefono: req.params.telefono };
+        const lim = Math.min(parseInt(limit) || 5, 50);
+        const pg = Math.max(parseInt(page) || 1, 1);
+
+        const total = await Pedido.countDocuments(query);
+        const data = await Pedido.find(query)
+            .sort({ createdAt: -1 })
+            .skip((pg - 1) * lim)
+            .limit(lim);
+
+        res.status(200).json({ data, total, hasMore: pg * lim < total });
     } catch (err) {
         res.status(500).json({ error: 'Error al obtener los pedidos.' });
     }
