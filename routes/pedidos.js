@@ -151,6 +151,97 @@ router.get('/stats/promotores', async (req, res) => {
 });
 
 // ==========================================
+// 🎂 RIFA DE ANIVERSARIO 2026 — ranking público
+// ==========================================
+// Cada $500 gastados (total pagado) del 5 al 27 de agosto 2026 = 1 boleto.
+// Ranking por consumo; solo se expone primer nombre + últimos 3 dígitos + boletos (nada sensible).
+// Con ?telefono=<10díg> devuelve además la posición de ese cliente (lugar/boletos/faltante), sin montos.
+const RIFA = {
+    // Rango en UTC que cubre 5–27 ago hora de México (UTC-6): 5 ago 06:00Z -> 28 ago 05:59:59Z
+    desde: new Date('2026-08-05T06:00:00.000Z'),
+    hasta: new Date('2026-08-28T05:59:59.999Z'),
+    metaBoleto: 500,
+    // Teléfonos internos / de mostrador que NO participan (además del filtro de 10 dígitos).
+    blocklist: new Set(['0', '00', '011']),
+};
+
+const soloDigitos = (s) => String(s || '').replace(/\D/g, '');
+const primerNombre = (s) => {
+    const limpio = String(s || '').split(/[-–(]/)[0].trim(); // corta sufijos "- Tec", "(ref)"...
+    const tok = limpio.split(/\s+/).filter(Boolean)[0] || 'Cliente';
+    return tok.charAt(0).toUpperCase() + tok.slice(1).toLowerCase();
+};
+
+router.get('/rifa-ranking', async (req, res) => {
+    try {
+        const filas = await Pedido.aggregate([
+            { $match: { createdAt: { $gte: RIFA.desde, $lte: RIFA.hasta } } },
+            { $group: { _id: '$telefono', gastado: { $sum: '$total' }, nombre: { $first: '$cliente' }, pedidos: { $sum: 1 } } },
+            { $sort: { gastado: -1 } },
+        ]);
+
+        // Limpieza: solo teléfonos reales de 10 dígitos, no en blocklist, con al menos 1 boleto.
+        const participantes = filas
+            .filter(f => {
+                const dig = soloDigitos(f._id);
+                return dig.length === 10 && !RIFA.blocklist.has(String(f._id).trim());
+            })
+            .map(f => ({
+                telefono: soloDigitos(f._id),
+                nombre: f.nombre,
+                gastado: f.gastado || 0,
+                pedidos: f.pedidos || 0,
+                boletos: Math.floor((f.gastado || 0) / RIFA.metaBoleto),
+            }))
+            .filter(f => f.boletos >= 1);
+        // Reordenar por gastado desc (ya viene ordenado, pero por seguridad tras el map/filter)
+        participantes.sort((a, b) => b.gastado - a.gastado);
+
+        const top = participantes.slice(0, 30).map((f, i) => ({
+            lugar: i + 1,
+            nombre: primerNombre(f.nombre),
+            tel3: f.telefono.slice(-3),
+            boletos: f.boletos,
+        }));
+
+        let yo = null;
+        const telQuery = soloDigitos(req.query.telefono);
+        if (telQuery.length === 10) {
+            const idx = participantes.findIndex(p => p.telefono === telQuery);
+            if (idx === -1) {
+                yo = { participa: false, lugar: null, boletos: 0, pedidos: 0, faltante: RIFA.metaBoleto };
+            } else {
+                const p = participantes[idx];
+                const resto = p.gastado % RIFA.metaBoleto;
+                yo = {
+                    participa: true,
+                    lugar: idx + 1,
+                    boletos: p.boletos,
+                    pedidos: p.pedidos,
+                    faltante: resto === 0 ? RIFA.metaBoleto : RIFA.metaBoleto - resto,
+                };
+            }
+        }
+
+        res.status(200).json({
+            top,
+            meta: {
+                totalParticipantes: participantes.length,
+                actualizado: new Date().toISOString(),
+                premios: { kits: 6, descuentos: 10, ganadores: 16 },
+                rango: '5–27 ago',
+                metaBoleto: RIFA.metaBoleto,
+                premiacion: '29 ago',
+            },
+            yo,
+        });
+    } catch (err) {
+        console.error('❌ rifa-ranking error:', err);
+        res.status(500).json({ error: 'Error al calcular el ranking.' });
+    }
+});
+
+// ==========================================
 // 📝 2. CREAR NUEVO PEDIDO (Logica Completa)
 // ==========================================
 router.post('/new', async (req, res) => {
