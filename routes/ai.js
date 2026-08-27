@@ -3,6 +3,7 @@ const axios = require('axios');
 const Clientes = require('../models/Clientes');
 const Despensas = require('../models/Despensas');
 const Product = require('../models/Product');
+const Pedido = require('../models/Pedidos');
 const { askVision, client } = require('../utils/ai');
 
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
@@ -780,6 +781,94 @@ router.post('/consolidar-compras', async (req, res) => {
     } catch (err) {
         console.error('❌ consolidar-compras error:', err);
         res.status(500).json({ error: err.message || 'Error consolidando' });
+    }
+});
+
+// ==========================================
+// ⚠️ MENSAJE DE REACTIVACIÓN (clientes en peligro) — personalizado por Claude
+// ==========================================
+const primerNom = (s) => {
+    const l = String(s || '').split(/[-–(]/)[0].trim();
+    const t = l.split(/\s+/).filter(Boolean)[0] || 'Cliente';
+    return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
+};
+
+const SCHEMA_REACTIVACION = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['whatsapp', 'emailSubject', 'emailBody'],
+    properties: {
+        whatsapp: { type: 'string' },
+        emailSubject: { type: 'string' },
+        emailBody: { type: 'string' },
+    },
+};
+
+const SYSTEM_REACTIVACION = `Eres redactor de retención de clientes de "Fresh Market", tienda de despensas y productos frescos a domicilio en Pachuca, México. Escribe mensajes cálidos, breves y naturales (español mexicano, tono cercano, 1-3 emojis máximo) para reactivar a un cliente que dejó de pedir.
+
+Devuelve 3 versiones del MISMO mensaje:
+- whatsapp: 2-4 líneas. Saluda con su nombre, menciona 1-2 productos que suele pedir (si hay), reconoce con calidez que hace tiempo no pide, ofrece el incentivo si existe, y cierra invitando a pedir esta semana. Firma con el nombre del remitente.
+- emailSubject: asunto corto y atractivo (máx ~50 caracteres).
+- emailBody: 3-5 líneas, mismo espíritu, pero usa la variable literal {{nombre}} en el saludo (NO el nombre real). Firma "Fresh Market".
+
+Reglas:
+- NO inventes productos que no estén en su historial; si no hay historial claro, habla en general de "productos frescos".
+- NO prometas descuentos o regalos que no estén en el incentivo indicado.
+- Nada de MAYÚSCULAS sostenidas ni signos de exclamación de más.`;
+
+router.post('/mensaje-reactivacion', async (req, res) => {
+    try {
+        const { telefono, incentivo = '', senderName = 'Fresh Market', diasSinPedir, segmento } = req.body || {};
+        const tel10 = limpiarTel(telefono).slice(-10);
+        if (tel10.length !== 10) return res.status(400).json({ error: 'Teléfono inválido.' });
+
+        // Cliente + últimos pedidos (para productos habituales), match por sufijo de 10 dígitos.
+        const cliente = await Clientes.findOne({ telefono: { $regex: tel10 + '$' } }).select('nombre');
+        const pedidos = await Pedido.find({ telefono: { $regex: tel10 + '$' } })
+            .sort({ createdAt: -1 }).limit(5).select('despensa newProducts');
+
+        // Frecuencia de productos (despensa + extras).
+        const freq = {};
+        pedidos.forEach(p => {
+            if (p.despensa) freq[p.despensa] = (freq[p.despensa] || 0) + 1;
+            (Array.isArray(p.newProducts) ? p.newProducts : []).forEach(np => {
+                const t = np && (np.title || np.nombre);
+                if (t) freq[t] = (freq[t] || 0) + 1;
+            });
+        });
+        const habituales = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k]) => k);
+
+        const nombre = primerNom(cliente && cliente.nombre);
+        const text = `Cliente: ${nombre}\n`
+            + `Días sin pedir: ${diasSinPedir != null ? diasSinPedir : 'desconocido'}\n`
+            + `Segmento: ${segmento || 'en riesgo'}\n`
+            + `Productos que suele pedir: ${habituales.length ? habituales.join(', ') : 'sin historial claro'}\n`
+            + `Incentivo a ofrecer: ${incentivo || '(ninguno específico)'}\n`
+            + `Nombre del remitente (quien firma el WhatsApp): ${senderName}`;
+
+        let data = null;
+        try {
+            const r = await askVision({ text, systemPrompt: SYSTEM_REACTIVACION, schema: SCHEMA_REACTIVACION });
+            data = r.data;
+        } catch (e) {
+            console.warn('IA reactivación falló, usando plantilla:', e.message);
+        }
+
+        // Red de seguridad: si vino vacío/corto, plantilla base determinista.
+        const ok = data && typeof data.whatsapp === 'string' && data.whatsapp.trim().length > 10;
+        if (!ok) {
+            const inc = incentivo ? ` Además, como agradecimiento: ${incentivo}.` : '';
+            data = {
+                whatsapp: `¡Hola ${nombre}! 👋 Soy ${senderName} de Fresh Market. Notamos que hace tiempo no haces pedido y te extrañamos 🥕.${inc} ¿Te comparto nuestras opciones de esta semana?`,
+                emailSubject: `${nombre}, te extrañamos en Fresh Market 🥕`,
+                emailBody: `¡Hola {{nombre}}! Notamos que hace tiempo no haces pedido y queremos verte de vuelta.${inc} Haz tu pedido esta semana y disfruta productos fresquísimos. — ${senderName}, Fresh Market`,
+            };
+        }
+
+        res.status(200).json({ ...data, nombre, habituales });
+    } catch (err) {
+        console.error('Error en /ai/mensaje-reactivacion:', err);
+        res.status(500).json({ error: 'Error generando el mensaje.' });
     }
 });
 

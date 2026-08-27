@@ -707,6 +707,96 @@ router.get('/lite', async (req, res) => {
     }
 });
 
+// ==========================================
+// ⚠️ CLIENTES EN PELIGRO (churn) — detección real por fecha del último pedido
+// ==========================================
+// Segmenta por la CADENCIA propia de cada cliente + topes fijos absolutos:
+//   perdido: >90 días sin pedir | dormido: 45–90 días (o ratio >=3x su ritmo)
+//   en_riesgo: 1.5x–3x su ritmo (o >21 días si solo tiene 1 pedido) | activo: dentro de su ritmo (se excluye)
+const soloDigChurn = (s) => String(s || '').replace(/\D/g, '');
+const BLOCKLIST_TEL = new Set(['0', '00', '011']);
+const DIA_MS = 86400000;
+
+function segmentarChurn(dias, ratio) {
+    if (dias > 90) return 'perdido';
+    if (dias > 45) return 'dormido';
+    if (ratio != null) {
+        if (ratio >= 3) return 'dormido';
+        if (ratio >= 1.5) return 'en_riesgo';
+        return 'activo';
+    }
+    // Cliente con 1 solo pedido (sin cadencia): umbral fijo suave
+    if (dias > 21) return 'en_riesgo';
+    return 'activo';
+}
+
+router.get('/en-peligro', async (req, res) => {
+    try {
+        const ahora = Date.now();
+
+        // Agregación por teléfono: fecha real del último/primer pedido (createdAt, NO el String `fecha`).
+        const filas = await Pedido.aggregate([
+            { $group: {
+                _id: '$telefono',
+                ultimoPedido: { $max: '$createdAt' },
+                primerPedido: { $min: '$createdAt' },
+                totalPedidos: { $sum: 1 },
+                totalGastado: { $sum: '$total' },
+                nombre: { $first: '$cliente' },
+            } },
+        ]);
+
+        // Mapa de clientes por teléfono canónico (para email/wallet/_id/nombre real).
+        const clientes = await Clientes.find({}, 'nombre telefono email hasWallet puntos');
+        const mapCli = {};
+        clientes.forEach(c => { const k = telCanonico(c.telefono); if (k.length === 10) mapCli[k] = c; });
+
+        const todos = filas
+            .filter(f => { const d = soloDigChurn(f._id); return d.length === 10 && !BLOCKLIST_TEL.has(String(f._id).trim()); })
+            .map(f => {
+                const tel = soloDigChurn(f._id);
+                const ultimo = new Date(f.ultimoPedido).getTime();
+                const primero = new Date(f.primerPedido).getTime();
+                const dias = Math.floor((ahora - ultimo) / DIA_MS);
+                const cadencia = f.totalPedidos >= 2 ? ((ultimo - primero) / (f.totalPedidos - 1)) / DIA_MS : null;
+                const ratio = (cadencia && cadencia > 0) ? dias / cadencia : null;
+                const cli = mapCli[tel];
+                return {
+                    telefono: tel,
+                    nombre: (cli && cli.nombre) || f.nombre || 'Cliente',
+                    email: (cli && cli.email) || null,
+                    hasWallet: !!(cli && cli.hasWallet),
+                    clienteId: cli ? cli._id : null,
+                    totalGastado: Math.round(f.totalGastado || 0),
+                    totalPedidos: f.totalPedidos || 0,
+                    ultimoPedido: f.ultimoPedido,
+                    diasSinPedir: dias,
+                    cadenciaDias: cadencia ? Math.round(cadencia) : null,
+                    segmento: segmentarChurn(dias, ratio),
+                };
+            })
+            .filter(f => f.segmento !== 'activo');
+
+        // Conteos por segmento (sobre TODOS los no-activos, antes de filtrar).
+        const conteos = { en_riesgo: 0, dormido: 0, perdido: 0 };
+        todos.forEach(f => { conteos[f.segmento]++; });
+
+        // Filtro opcional por segmento
+        const seg = String(req.query.segmento || '').trim();
+        let lista = ['en_riesgo', 'dormido', 'perdido'].includes(seg) ? todos.filter(f => f.segmento === seg) : todos;
+
+        // Prioridad: en_riesgo primero, luego por gasto desc (rescatar primero a los valiosos que apenas se alejan).
+        const orden = { en_riesgo: 0, dormido: 1, perdido: 2 };
+        lista.sort((a, b) => (orden[a.segmento] - orden[b.segmento]) || (b.totalGastado - a.totalGastado));
+
+        const limit = Math.min(parseInt(req.query.limit) || 200, 1000);
+        res.status(200).json({ clientes: lista.slice(0, limit), conteos, total: lista.length });
+    } catch (err) {
+        console.error('Error en /clientes/en-peligro:', err);
+        res.status(500).json({ error: 'Error del servidor' });
+    }
+});
+
 // Inactivos semana
 router.get('/inactivos-semana', async (req, res) => {
     try {
