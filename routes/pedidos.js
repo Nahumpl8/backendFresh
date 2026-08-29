@@ -1,6 +1,8 @@
 const router = require('express').Router();
 const Pedido = require('../models/Pedidos');
 const Clientes = require('../models/Clientes');
+const RifaGanadores = require('../models/RifaGanadores');
+const { requireAdmin } = require('../utils/adminMiddleware');
 // Si no usas verifyToken en estas rutas, puedes comentar la línea siguiente, 
 // pero es buena práctica tenerla importada por si acaso.
 const { verifyToken, verifyTokenAndAuthorization } = require('./verifyToken');
@@ -157,9 +159,10 @@ router.get('/stats/promotores', async (req, res) => {
 // Ranking por consumo; solo se expone primer nombre + últimos 3 dígitos + boletos (nada sensible).
 // Con ?telefono=<10díg> devuelve además la posición de ese cliente (lugar/boletos/faltante), sin montos.
 const RIFA = {
-    // Rango en UTC que cubre 5–27 ago hora de México (UTC-6): 5 ago 06:00Z -> 28 ago 05:59:59Z
+    // Rango en UTC que cubre 5–29 ago hora de México (UTC-6): 5 ago 06:00Z -> 30 ago 05:59:59Z
+    // (incluye a todos los que hicieron pedido hasta el cierre del sábado 29 ago, día de premiación).
     desde: new Date('2026-08-05T06:00:00.000Z'),
-    hasta: new Date('2026-08-28T05:59:59.999Z'),
+    hasta: new Date('2026-08-30T05:59:59.999Z'),
     metaBoleto: 500,
     // Teléfonos internos / de mostrador que NO participan (además del filtro de 10 dígitos).
     blocklist: new Set(['0', '00', '011']),
@@ -172,30 +175,37 @@ const primerNombre = (s) => {
     return tok.charAt(0).toUpperCase() + tok.slice(1).toLowerCase();
 };
 
+// Agrega los pedidos del rango de la rifa por teléfono y devuelve la lista COMPLETA de
+// participantes válidos (10 dígitos, no en blocklist, ≥1 boleto), ordenada por gasto desc.
+// Reutilizada por rifa-ranking (público), rifa-participantes y rifa-sortear (admin).
+async function calcularParticipantes() {
+    const filas = await Pedido.aggregate([
+        { $match: { createdAt: { $gte: RIFA.desde, $lte: RIFA.hasta } } },
+        { $group: { _id: '$telefono', gastado: { $sum: '$total' }, nombre: { $first: '$cliente' }, pedidos: { $sum: 1 } } },
+        { $sort: { gastado: -1 } },
+    ]);
+
+    const participantes = filas
+        .filter(f => {
+            const dig = soloDigitos(f._id);
+            return dig.length === 10 && !RIFA.blocklist.has(String(f._id).trim());
+        })
+        .map(f => ({
+            telefono: soloDigitos(f._id),
+            nombre: f.nombre,
+            gastado: f.gastado || 0,
+            pedidos: f.pedidos || 0,
+            boletos: Math.floor((f.gastado || 0) / RIFA.metaBoleto),
+        }))
+        .filter(f => f.boletos >= 1);
+    // Reordenar por gastado desc (ya viene ordenado, pero por seguridad tras el map/filter)
+    participantes.sort((a, b) => b.gastado - a.gastado);
+    return participantes;
+}
+
 router.get('/rifa-ranking', async (req, res) => {
     try {
-        const filas = await Pedido.aggregate([
-            { $match: { createdAt: { $gte: RIFA.desde, $lte: RIFA.hasta } } },
-            { $group: { _id: '$telefono', gastado: { $sum: '$total' }, nombre: { $first: '$cliente' }, pedidos: { $sum: 1 } } },
-            { $sort: { gastado: -1 } },
-        ]);
-
-        // Limpieza: solo teléfonos reales de 10 dígitos, no en blocklist, con al menos 1 boleto.
-        const participantes = filas
-            .filter(f => {
-                const dig = soloDigitos(f._id);
-                return dig.length === 10 && !RIFA.blocklist.has(String(f._id).trim());
-            })
-            .map(f => ({
-                telefono: soloDigitos(f._id),
-                nombre: f.nombre,
-                gastado: f.gastado || 0,
-                pedidos: f.pedidos || 0,
-                boletos: Math.floor((f.gastado || 0) / RIFA.metaBoleto),
-            }))
-            .filter(f => f.boletos >= 1);
-        // Reordenar por gastado desc (ya viene ordenado, pero por seguridad tras el map/filter)
-        participantes.sort((a, b) => b.gastado - a.gastado);
+        const participantes = await calcularParticipantes();
 
         const top = participantes.slice(0, 30).map((f, i) => ({
             lugar: i + 1,
@@ -229,7 +239,7 @@ router.get('/rifa-ranking', async (req, res) => {
                 totalParticipantes: participantes.length,
                 actualizado: new Date().toISOString(),
                 premios: { kits: 6, descuentos: 10, ganadores: 16 },
-                rango: '5–27 ago',
+                rango: '5–29 ago',
                 metaBoleto: RIFA.metaBoleto,
                 premiacion: '29 ago',
             },
@@ -238,6 +248,98 @@ router.get('/rifa-ranking', async (req, res) => {
     } catch (err) {
         console.error('❌ rifa-ranking error:', err);
         res.status(500).json({ error: 'Error al calcular el ranking.' });
+    }
+});
+
+// ==========================================
+// 🎰 SORTEO DE GANADORES (admin) — tómbola online
+// ==========================================
+// El sorteo se hace y persiste UNA sola vez en el backend (aleatorio ponderado por
+// boletos, sin repetir ganador). El frontend solo revela a los ganadores ya decididos.
+const RIFA_SORTEO_ID = 'aniversario-2026';
+const RIFA_PREMIOS = { descuentos: 10, kits: 6 }; // se revelan primero los 10 descuentos, luego los 6 kits
+
+// Lista COMPLETA de participantes, segura (sin teléfono completo ni montos).
+router.get('/rifa-participantes', requireAdmin, async (req, res) => {
+    try {
+        const participantes = await calcularParticipantes();
+        res.status(200).json({
+            total: participantes.length,
+            participantes: participantes.map(p => ({
+                nombre: primerNombre(p.nombre),
+                tel3: p.telefono.slice(-3),
+                boletos: p.boletos,
+            })),
+        });
+    } catch (err) {
+        console.error('❌ rifa-participantes error:', err);
+        res.status(500).json({ error: 'Error al obtener participantes.' });
+    }
+});
+
+// Devuelve el sorteo guardado (o null si aún no se corre) — para reanudar el revelado.
+router.get('/rifa-ganadores', requireAdmin, async (req, res) => {
+    try {
+        const doc = await RifaGanadores.findOne({ sorteo: RIFA_SORTEO_ID });
+        res.status(200).json(doc || null);
+    } catch (err) {
+        console.error('❌ rifa-ganadores error:', err);
+        res.status(500).json({ error: 'Error al obtener ganadores.' });
+    }
+});
+
+// Corre el sorteo ponderado y persiste. Idempotente: si ya existe, devuelve el guardado
+// salvo que venga ?force=true (re-sortear).
+router.post('/rifa-sortear', requireAdmin, async (req, res) => {
+    try {
+        const force = String(req.query.force) === 'true';
+        const existente = await RifaGanadores.findOne({ sorteo: RIFA_SORTEO_ID });
+        if (existente && !force) {
+            return res.status(200).json(existente);
+        }
+
+        const participantes = await calcularParticipantes();
+        const totalGanadores = RIFA_PREMIOS.descuentos + RIFA_PREMIOS.kits; // 16
+        if (participantes.length < totalGanadores) {
+            return res.status(400).json({
+                error: `Se necesitan al menos ${totalGanadores} participantes para el sorteo (hay ${participantes.length}).`,
+            });
+        }
+
+        // Muestreo ponderado sin reemplazo: cada boleto es una entrada.
+        const pool = participantes.map(p => ({ ...p })); // copia mutable
+        const seleccionados = [];
+        for (let i = 0; i < totalGanadores; i++) {
+            const sumaPesos = pool.reduce((acc, p) => acc + p.boletos, 0);
+            let r = Math.random() * sumaPesos;
+            let idx = 0;
+            for (let j = 0; j < pool.length; j++) {
+                r -= pool[j].boletos;
+                if (r <= 0) { idx = j; break; }
+            }
+            seleccionados.push(pool[idx]);
+            pool.splice(idx, 1); // sin reemplazo
+        }
+
+        // Orden de revelado: primero los 10 descuentos, luego los 6 kits.
+        const ganadores = seleccionados.map((p, i) => ({
+            orden: i + 1,
+            premio: i < RIFA_PREMIOS.descuentos ? 'descuento' : 'kit',
+            telefono: p.telefono,
+            nombre: primerNombre(p.nombre),
+            tel3: p.telefono.slice(-3),
+            boletos: p.boletos,
+        }));
+
+        const doc = await RifaGanadores.findOneAndUpdate(
+            { sorteo: RIFA_SORTEO_ID },
+            { sorteo: RIFA_SORTEO_ID, ganadores, totalParticipantes: participantes.length },
+            { new: true, upsert: true, setDefaultsOnInsert: true },
+        );
+        res.status(200).json(doc);
+    } catch (err) {
+        console.error('❌ rifa-sortear error:', err);
+        res.status(500).json({ error: 'Error al realizar el sorteo.' });
     }
 });
 
