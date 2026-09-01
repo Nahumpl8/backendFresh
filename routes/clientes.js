@@ -6,6 +6,9 @@ const WalletDevice = require('../models/WalletDevice');
 const { sendWelcomeEmail } = require('../utils/emailService');
 const { inferEnvioDireccion } = require('../utils/envioZonas');
 const { envioPorColonia } = require('./coloniasEnvio');
+const { requireAdmin } = require('../utils/adminMiddleware');
+const notifyPassUpdate = require('../utils/pushApple');
+const { notifyGoogleWalletUpdate } = require('../utils/pushGoogle');
 
 // Utilidad para limpiar teléfono
 function limpiarTelefono(tel) {
@@ -382,6 +385,48 @@ router.put('/canjear/:telefono', async (req, res) => {
     } catch (err) {
         console.error('Error al canjear:', err);
         res.status(500).json({ error: 'Error al actualizar cliente' });
+    }
+});
+
+// Reinicio MASIVO de puntos (corte bimestral). Protegido con token de admin
+// (se obtiene con POST /api/admin/login usando ADMIN_PASSWORD). Pone puntos:0 a
+// TODOS los clientes y refresca los pases de Wallet (Apple/Google) en segundo
+// plano. NO toca sellos, racha ni el histórico sellosSemestrales.
+router.put('/reset-puntos-todos', requireAdmin, async (req, res) => {
+    try {
+        const resultado = await Clientes.updateMany(
+            {},
+            // updatedAt forzado para que los pases de Wallet detecten el cambio
+            { $set: { puntos: 0, updatedAt: new Date() } }
+        );
+
+        // Respondemos de inmediato: el refresco de Wallet puede ser de cientos de
+        // clientes y no debe bloquear la respuesta del panel.
+        res.status(200).json({
+            mensaje: 'Puntos reiniciados para todos los clientes',
+            modificados: resultado.modifiedCount,
+        });
+
+        // --- Refresco de Wallet en segundo plano ---
+        (async () => {
+            const clientesConWallet = await Clientes.find({ hasWallet: true }).select('_id walletPlatform');
+            let ok = 0;
+            for (const cliente of clientesConWallet) {
+                try {
+                    await notifyPassUpdate(cliente._id);
+                    if (cliente.walletPlatform === 'google' || cliente.walletPlatform === 'both') {
+                        await notifyGoogleWalletUpdate(cliente._id);
+                    }
+                    ok++;
+                } catch (e) {
+                    // Ignoramos errores individuales para no detener el proceso
+                }
+            }
+            console.log(`🎉 Reset bimestral: Wallet refrescado para ${ok}/${clientesConWallet.length} clientes.`);
+        })().catch(err => console.error('Error refrescando Wallet tras reset masivo:', err));
+    } catch (err) {
+        console.error('Error al reiniciar puntos de todos:', err);
+        res.status(500).json({ error: 'Error al reiniciar puntos' });
     }
 });
 
