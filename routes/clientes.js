@@ -214,6 +214,107 @@ router.post('/guardar-email', async (req, res) => {
     }
 });
 
+// Reinicio MASIVO de puntos (corte bimestral). Protegido con token de admin
+// (se obtiene con POST /api/admin/login usando ADMIN_PASSWORD). Pone puntos:0 a
+// TODOS los clientes y refresca los pases de Wallet (Apple/Google) en segundo
+// plano. NO toca sellos, racha ni el histórico sellosSemestrales.
+// IMPORTANTE: debe declararse ANTES de router.put('/:id') o esa ruta lo captura.
+//
+// Helper: refresca los pases de Wallet de una lista de clientes (Apple + Google),
+// secuencial y tolerante a errores individuales, en segundo plano.
+async function refrescarWallet(clientes, etiqueta) {
+    let ok = 0;
+    for (const c of clientes) {
+        try {
+            await notifyPassUpdate(c._id);
+            if (c.walletPlatform === 'google' || c.walletPlatform === 'both') {
+                await notifyGoogleWalletUpdate(c._id);
+            }
+            ok++;
+        } catch (e) { /* ignorar errores individuales */ }
+    }
+    console.log(`🎉 ${etiqueta}: Wallet refrescado para ${ok}/${clientes.length} clientes.`);
+}
+
+router.put('/reset-puntos-todos', requireAdmin, async (req, res) => {
+    try {
+        // ?conservarHoy=true -> a cada cliente le deja los puntos que generaron SUS
+        // pedidos de hoy (México, UTC-6); a los demás, 0. Sin el flag, pone 0 a todos.
+        const conservarHoy = req.query.conservarHoy === 'true';
+
+        if (!conservarHoy) {
+            const resultado = await Clientes.updateMany(
+                {},
+                // updatedAt forzado para que los pases de Wallet detecten el cambio
+                { $set: { puntos: 0, updatedAt: new Date() } }
+            );
+            res.status(200).json({
+                mensaje: 'Puntos reiniciados para todos los clientes',
+                modificados: resultado.modifiedCount,
+            });
+            // Refresco de Wallet en segundo plano (todos los que tienen pase)
+            Clientes.find({ hasWallet: true }).select('_id walletPlatform')
+                .then(cs => refrescarWallet(cs, 'Reset total'))
+                .catch(err => console.error('Error refrescando Wallet tras reset total:', err));
+            return;
+        }
+
+        // --- MODO CONSERVAR HOY ---
+        // Rango de "hoy" en horario de México (UTC-6): [00:00, 24:00).
+        const mxNow = new Date(Date.now() - 6 * 3600 * 1000);
+        const inicio = new Date(Date.UTC(mxNow.getUTCFullYear(), mxNow.getUTCMonth(), mxNow.getUTCDate(), 6, 0, 0));
+        const fin = new Date(inicio.getTime() + 24 * 3600 * 1000);
+
+        // Puntos netos que aportaron los pedidos de hoy, agrupados por teléfono.
+        // El pedido guarda total == totalFinal; misma fórmula que al crear el pedido
+        // (1.2% del efectivo, menos los puntos usados). puntosDobles no se guarda por
+        // pedido (promo rara) -> se calcula al 1.2% normal.
+        const pedidosHoy = await Pedido.find({ createdAt: { $gte: inicio, $lt: fin } })
+            .select('telefono total puntosUsados');
+        const deltaPorTel = {};
+        for (const p of pedidosHoy) {
+            const canon = telCanonico(p.telefono);
+            if (!canon) continue;
+            const usados = p.puntosUsados || 0;
+            const nuevos = Math.round(((p.total || 0) - usados) * 0.012);
+            deltaPorTel[canon] = (deltaPorTel[canon] || 0) + (nuevos - usados);
+        }
+
+        const clientes = await Clientes.find({}).select('telefono puntos hasWallet walletPlatform');
+        const ops = [];
+        const cambiadosConWallet = [];
+        for (const c of clientes) {
+            const antes = c.puntos || 0;
+            const keep = deltaPorTel[telCanonico(c.telefono)];
+            const despues = keep != null ? Math.max(0, keep) : 0;
+            if (despues !== antes) {
+                ops.push({
+                    updateOne: {
+                        filter: { _id: c._id },
+                        update: { $set: { puntos: despues, updatedAt: new Date() } },
+                    },
+                });
+                if (c.hasWallet) cambiadosConWallet.push(c);
+            }
+        }
+
+        const r = ops.length ? await Clientes.bulkWrite(ops) : { modifiedCount: 0 };
+        res.status(200).json({
+            mensaje: 'Puntos reiniciados conservando los de hoy',
+            modificados: r.modifiedCount,
+            conservaron: Object.keys(deltaPorTel).length,
+            pedidosHoy: pedidosHoy.length,
+        });
+
+        // Refresco de Wallet en segundo plano (solo los que cambiaron)
+        refrescarWallet(cambiadosConWallet, 'Reset conservando hoy')
+            .catch(err => console.error('Error refrescando Wallet (conservar hoy):', err));
+    } catch (err) {
+        console.error('Error al reiniciar puntos de todos:', err);
+        res.status(500).json({ error: 'Error al reiniciar puntos' });
+    }
+});
+
 // Actualizar cliente
 router.put('/:id', async (req, res) => {
     try {
@@ -385,105 +486,6 @@ router.put('/canjear/:telefono', async (req, res) => {
     } catch (err) {
         console.error('Error al canjear:', err);
         res.status(500).json({ error: 'Error al actualizar cliente' });
-    }
-});
-
-// Reinicio MASIVO de puntos (corte bimestral). Protegido con token de admin
-// (se obtiene con POST /api/admin/login usando ADMIN_PASSWORD). Pone puntos:0 a
-// TODOS los clientes y refresca los pases de Wallet (Apple/Google) en segundo
-// plano. NO toca sellos, racha ni el histórico sellosSemestrales.
-// Helper: refresca los pases de Wallet de una lista de clientes (Apple + Google),
-// secuencial y tolerante a errores individuales, en segundo plano.
-async function refrescarWallet(clientes, etiqueta) {
-    let ok = 0;
-    for (const c of clientes) {
-        try {
-            await notifyPassUpdate(c._id);
-            if (c.walletPlatform === 'google' || c.walletPlatform === 'both') {
-                await notifyGoogleWalletUpdate(c._id);
-            }
-            ok++;
-        } catch (e) { /* ignorar errores individuales */ }
-    }
-    console.log(`🎉 ${etiqueta}: Wallet refrescado para ${ok}/${clientes.length} clientes.`);
-}
-
-router.put('/reset-puntos-todos', requireAdmin, async (req, res) => {
-    try {
-        // ?conservarHoy=true -> a cada cliente le deja los puntos que generaron SUS
-        // pedidos de hoy (México, UTC-6); a los demás, 0. Sin el flag, pone 0 a todos.
-        const conservarHoy = req.query.conservarHoy === 'true';
-
-        if (!conservarHoy) {
-            const resultado = await Clientes.updateMany(
-                {},
-                // updatedAt forzado para que los pases de Wallet detecten el cambio
-                { $set: { puntos: 0, updatedAt: new Date() } }
-            );
-            res.status(200).json({
-                mensaje: 'Puntos reiniciados para todos los clientes',
-                modificados: resultado.modifiedCount,
-            });
-            // Refresco de Wallet en segundo plano (todos los que tienen pase)
-            Clientes.find({ hasWallet: true }).select('_id walletPlatform')
-                .then(cs => refrescarWallet(cs, 'Reset total'))
-                .catch(err => console.error('Error refrescando Wallet tras reset total:', err));
-            return;
-        }
-
-        // --- MODO CONSERVAR HOY ---
-        // Rango de "hoy" en horario de México (UTC-6): [00:00, 24:00).
-        const mxNow = new Date(Date.now() - 6 * 3600 * 1000);
-        const inicio = new Date(Date.UTC(mxNow.getUTCFullYear(), mxNow.getUTCMonth(), mxNow.getUTCDate(), 6, 0, 0));
-        const fin = new Date(inicio.getTime() + 24 * 3600 * 1000);
-
-        // Puntos netos que aportaron los pedidos de hoy, agrupados por teléfono.
-        // El pedido guarda total == totalFinal; misma fórmula que al crear el pedido
-        // (1.2% del efectivo, menos los puntos usados). puntosDobles no se guarda por
-        // pedido (promo rara) -> se calcula al 1.2% normal.
-        const pedidosHoy = await Pedido.find({ createdAt: { $gte: inicio, $lt: fin } })
-            .select('telefono total puntosUsados');
-        const deltaPorTel = {};
-        for (const p of pedidosHoy) {
-            const canon = telCanonico(p.telefono);
-            if (!canon) continue;
-            const usados = p.puntosUsados || 0;
-            const nuevos = Math.round(((p.total || 0) - usados) * 0.012);
-            deltaPorTel[canon] = (deltaPorTel[canon] || 0) + (nuevos - usados);
-        }
-
-        const clientes = await Clientes.find({}).select('telefono puntos hasWallet walletPlatform');
-        const ops = [];
-        const cambiadosConWallet = [];
-        for (const c of clientes) {
-            const antes = c.puntos || 0;
-            const keep = deltaPorTel[telCanonico(c.telefono)];
-            const despues = keep != null ? Math.max(0, keep) : 0;
-            if (despues !== antes) {
-                ops.push({
-                    updateOne: {
-                        filter: { _id: c._id },
-                        update: { $set: { puntos: despues, updatedAt: new Date() } },
-                    },
-                });
-                if (c.hasWallet) cambiadosConWallet.push(c);
-            }
-        }
-
-        const r = ops.length ? await Clientes.bulkWrite(ops) : { modifiedCount: 0 };
-        res.status(200).json({
-            mensaje: 'Puntos reiniciados conservando los de hoy',
-            modificados: r.modifiedCount,
-            conservaron: Object.keys(deltaPorTel).length,
-            pedidosHoy: pedidosHoy.length,
-        });
-
-        // Refresco de Wallet en segundo plano (solo los que cambiaron)
-        refrescarWallet(cambiadosConWallet, 'Reset conservando hoy')
-            .catch(err => console.error('Error refrescando Wallet (conservar hoy):', err));
-    } catch (err) {
-        console.error('Error al reiniciar puntos de todos:', err);
-        res.status(500).json({ error: 'Error al reiniciar puntos' });
     }
 });
 
