@@ -11,8 +11,92 @@ const notifyPassUpdate = require('../utils/pushApple');
 const { notifyGoogleWalletUpdate } = require('../utils/pushGoogle');
 const { sendOrderConfirmationEmail } = require('../utils/emailService');
 const { reclamarPromociones } = require('../utils/promociones');
+const { envioPorColonia } = require('./coloniasEnvio');
+const { inferEnvioPrincipal } = require('../utils/envioZonas');
 
 const BASE_URL = process.env.BASE_URL || 'https://backendfresh-production.up.railway.app';
+
+// Alta de cliente a partir de un pedido.
+//
+// El checkout de freshmarket.mx deja pedir sin crear cuenta, y /pedidos/new solo
+// buscaba al cliente: si no existía, el pedido se guardaba pero la persona nunca
+// aparecía en /clientes, no acumulaba puntos ni sellos y sus compras no contaban
+// para las estadísticas. Ahora, si no existe, se da de alta con los datos del
+// propio pedido y sigue el flujo normal (puntos, sellos, racha).
+//
+// La zona de envío se resuelve igual que en POST /clientes/new: primero lo que
+// mandó el front (colonia + CP del selector), si no por inferencia del texto de
+// la dirección.
+async function crearClienteDesdePedido(body) {
+    const telefono = String(body.telefono || '').replace(/\D/g, '').slice(-10);
+    const nombre = String(body.cliente || '').trim();
+    const direccion = String(body.direccion || '').trim();
+
+    // Sin estos tres el documento no es válido (el modelo los exige) y un
+    // registro a medias estorba más de lo que ayuda.
+    if (telefono.length !== 10 || !nombre || !direccion) return null;
+
+    let costoEnvio = Number(body.costoEnvio) || 0;
+    let gratisJueves = body.gratisJueves === true;
+    if (!costoEnvio && body.colonia) {
+        try {
+            const envio = await envioPorColonia(body.cp, body.colonia);
+            if (envio) { costoEnvio = envio.costoEnvio; gratisJueves = envio.gratisJueves; }
+        } catch (e) { console.warn('envioPorColonia (pedido):', e.message); }
+    }
+    if (!costoEnvio) {
+        const inferido = inferEnvioPrincipal({ nombre, direccion });
+        if (inferido) { costoEnvio = inferido.costoEnvio; gratisJueves = inferido.gratisJueves; }
+    }
+
+    const datos = {
+        nombre,
+        telefono,
+        direccion,
+        gpsLink: body.gpsLink || '',
+        colonia: body.colonia || '',
+        cp: body.cp || '',
+        costoEnvio,
+        gratisJueves,
+        misDirecciones: [{
+            alias: 'Dirección Principal',
+            direccion,
+            gpsLink: body.gpsLink || '',
+            colonia: body.colonia || '',
+            cp: body.cp || '',
+            costoEnvio,
+            gratisJueves,
+        }],
+    };
+    if (body.email) datos.email = String(body.email).trim().toLowerCase();
+
+    try {
+        const creado = await new Clientes(datos).save();
+        console.log('🆕 Cliente dado de alta desde su primer pedido:', creado.nombre, creado.telefono);
+        return creado;
+    } catch (err) {
+        if (err.code === 11000) {
+            // Dos pedidos del mismo checkout entran casi a la vez: si el otro ganó
+            // la carrera, el índice único salta y basta con releer el que quedó.
+            const yaExiste = await Clientes.findOne({ telefono });
+            if (yaExiste) return yaExiste;
+            // El choque fue con el índice único de email (otra persona ya lo usa):
+            // se da de alta sin correo antes que perder al cliente otra vez.
+            if (datos.email) {
+                delete datos.email;
+                try {
+                    return await new Clientes(datos).save();
+                } catch (e2) {
+                    console.error('❌ Alta sin email tampoco pudo:', e2.message);
+                    return null;
+                }
+            }
+            return null;
+        }
+        console.error('❌ No se pudo dar de alta al cliente desde el pedido:', err.message);
+        return null;
+    }
+}
 
 // ==========================================
 // 📅 HELPER FUNCTIONS (FECHAS Y SEMANAS)
@@ -352,8 +436,19 @@ router.post('/new', async (req, res) => {
     try {
         const { telefono, puntosUsados, total } = req.body;
 
-        // Buscar al cliente para ver su vendedor
-        const cliente = await Clientes.findOne({ telefono: telefono });
+        // Buscar al cliente para ver su vendedor. Si es su primer pedido y pidió
+        // sin cuenta, se da de alta aquí mismo: si no, se perdería (ver
+        // crearClienteDesdePedido arriba).
+        let cliente = await Clientes.findOne({ telefono: telefono });
+        // En Clientes conviven telefonos guardados con lada, espacios o guiones.
+        // Si la busqueda exacta falla se reintenta por los ultimos 10 digitos:
+        // sin esto, el alta de abajo crearia una ficha duplicada de alguien que
+        // ya existe (el panel manda el telefono tal como lo escribio el operador).
+        const tel10 = String(telefono || '').replace(/\D/g, '').slice(-10);
+        if (!cliente && tel10.length === 10) {
+            cliente = await Clientes.findOne({ telefono: { $regex: tel10 + '$' } });
+        }
+        if (!cliente) cliente = await crearClienteDesdePedido(req.body);
 
         // --- LÓGICA DE PROMOTORES ---
         let vendedor = 'Fresh Market';
