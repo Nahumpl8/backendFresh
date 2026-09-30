@@ -840,6 +840,9 @@ router.get('/en-peligro', async (req, res) => {
 
         // Agregación por teléfono: fecha real del último/primer pedido (createdAt, NO el String `fecha`).
         const filas = await Pedido.aggregate([
+            // Ordenado para que $last sea de verdad el pedido más reciente: de ahí
+            // salen nombre y dirección de quien todavía no tiene ficha de cliente.
+            { $sort: { createdAt: 1 } },
             { $group: {
                 _id: '$telefono',
                 ultimoPedido: { $max: '$createdAt' },
@@ -847,11 +850,13 @@ router.get('/en-peligro', async (req, res) => {
                 totalPedidos: { $sum: 1 },
                 totalGastado: { $sum: '$total' },
                 nombre: { $first: '$cliente' },
+                nombreReciente: { $last: '$cliente' },
+                direccionPedido: { $last: '$direccion' },
             } },
         ]);
 
         // Mapa de clientes por teléfono canónico (para email/wallet/_id/nombre real).
-        const clientes = await Clientes.find({}, 'nombre telefono email hasWallet puntos');
+        const clientes = await Clientes.find({}, 'nombre telefono email hasWallet puntos direccion colonia cp');
         const mapCli = {};
         clientes.forEach(c => { const k = telCanonico(c.telefono); if (k.length === 10) mapCli[k] = c; });
 
@@ -871,6 +876,11 @@ router.get('/en-peligro', async (req, res) => {
                     email: (cli && cli.email) || null,
                     hasWallet: !!(cli && cli.hasWallet),
                     clienteId: cli ? cli._id : null,
+                    // La ficha manda; si no la tiene, la dirección del último pedido.
+                    direccion: (cli && cli.direccion) || f.direccionPedido || '',
+                    colonia: (cli && cli.colonia) || '',
+                    cp: (cli && cli.cp) || '',
+                    puntos: (cli && cli.puntos) || 0,
                     totalGastado: Math.round(f.totalGastado || 0),
                     totalPedidos: f.totalPedidos || 0,
                     ultimoPedido: f.ultimoPedido,
