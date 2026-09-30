@@ -903,7 +903,10 @@ router.get('/en-peligro', async (req, res) => {
         const orden = { en_riesgo: 0, dormido: 1, perdido: 2 };
         lista.sort((a, b) => (orden[a.segmento] - orden[b.segmento]) || (b.totalGastado - a.totalGastado));
 
-        const limit = Math.min(parseInt(req.query.limit) || 200, 1000);
+        // Tope alto: el panel descarga un segmento completo a CSV y los perdidos
+        // pasan de 2000. Con el tope de 1000 la exportación salía recortada sin
+        // avisar, porque los tres segmentos compartían ese cupo.
+        const limit = Math.min(parseInt(req.query.limit) || 200, 5000);
         res.status(200).json({ clientes: lista.slice(0, limit), conteos, total: lista.length });
     } catch (err) {
         console.error('Error en /clientes/en-peligro:', err);
