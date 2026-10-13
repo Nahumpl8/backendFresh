@@ -72,6 +72,37 @@ const ClienteSchema = new mongoose.Schema({
     tarjetasCompletadas: { type: Number, default: 0 }, // Histórico de tarjetas llenas
     premioDisponible: { type: Boolean, default: false }, // ¿Tiene derecho a premio por 8 sellos?
 
+    // --- 📊 MEDICIÓN DE CRECIMIENTO ---
+    // Canal por el que prefiere que le escribamos. Por defecto WhatsApp, que es
+    // como opera el negocio hoy.
+    canalPreferido: {
+        type: String,
+        enum: ['whatsapp', 'telegram', 'email'],
+        default: 'whatsapp'
+    },
+    telegramId: { type: String, default: null },
+
+    // Fecha del último pedido. La calcula scripts/backfillMetricas.js desde la
+    // colección de pedidos (no hay referencia por id: el enlace es el teléfono).
+    ultimaCompra: { type: Date, default: null },
+
+    // Alta del cliente. Se rellena con createdAt donde falte; existe aparte
+    // porque createdAt es la fecha del documento, no necesariamente la del alta
+    // real en el negocio (las fichas migradas comparten createdAt de la carga).
+    fechaAlta: { type: Date, default: null },
+
+    // Segmento para campañas de reactivación. Lo calcula el mismo backfill:
+    //   pre_registro_con_compras -> ficha anterior a nov 2025, sin pedidos en la
+    //       BD pero con contadores > 0 (compró antes de que hubiera registro)
+    //   pre_registro_sin_rastro  -> ficha anterior a nov 2025, sin pedidos ni contadores
+    //   dormido                  -> tiene pedidos, pero ninguno en los últimos 60 días
+    //   null                     -> el resto (cliente activo o ficha reciente)
+    segmentoReactivacion: {
+        type: String,
+        enum: ['pre_registro_con_compras', 'pre_registro_sin_rastro', 'dormido', null],
+        default: null
+    },
+
     // --- 🎡 RULETA (PREMIOS GANADOS) ---
     premiosPendientes: [{
         label: String,        
@@ -93,6 +124,9 @@ ClienteSchema.index({ email: 1 }, { unique: true, sparse: true });
 ClienteSchema.index({ nombre: 1 });
 ClienteSchema.index({ telefono: 1 });
 ClienteSchema.index({ nombre: 'text', telefono: 'text' });
+// Métricas: listados de reactivación y "clientes activos" ordenan por estos campos.
+ClienteSchema.index({ ultimaCompra: -1 });
+ClienteSchema.index({ segmentoReactivacion: 1 });
 
 // ---------------------------------------------------------
 // 🚚 AUTO-ENVÍO al crear un cliente nuevo

@@ -39,6 +39,7 @@ const rutasRoute = require('./routes/rutas');
 const promocionesRoute = require('./routes/promociones');
 const aiRoute = require('./routes/ai');
 const coloniasEnvioRoute = require('./routes/coloniasEnvio');
+const metricasRoute = require('./routes/metricas');
 
 // --- CONEXIÓN A MONGODB ---
 mongoose.connect(process.env.MONGO_URL)
@@ -72,6 +73,7 @@ app.use('/api/rutas', rutasRoute);
 app.use('/api/promociones', promocionesRoute);
 app.use('/api/ai', aiRoute);
 app.use('/api/colonias-envio', coloniasEnvioRoute);
+app.use('/api/metricas', metricasRoute);
 
 
 // --- SERVIDOR ---

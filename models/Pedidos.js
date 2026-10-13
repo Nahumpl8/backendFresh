@@ -26,9 +26,29 @@ const PedidoSchema = new mongoose.Schema({
     regaloRuletaSpinId: { type: String, default: "" },
     regaloPromo: { type: String, default: "" },         // regalo por promoción (separado del regalo normal)
     via: { type: String, default: "" },                 // 'web' si el pedido vino de freshmarket.mx
+
+    // --- 📊 MEDICIÓN DE CRECIMIENTO ---
+    // `via` solo distingue la tienda web; `fuente` es el canal de adquisición y
+    // se usa en /api/metricas. Los pedidos anteriores a esta medición quedan en
+    // 'desconocido' (el campo via no existía antes del 21 jul 2026).
+    fuente: {
+        type: String,
+        enum: ['whatsapp', 'telegram', 'email', 'web', 'anuncio', 'desconocido'],
+        default: 'desconocido'
+    },
+    utm: {
+        source:   { type: String, default: null },
+        medium:   { type: String, default: null },
+        campaign: { type: String, default: null }
+    },
 },
     { timestamps: true }
 );
     
+// Índices de métricas: las agregaciones de /api/metricas filtran por createdAt y
+// agrupan por telefono. El índice de createdAt ya existía (autocreado); este par
+// cubre el join por cliente sin recorrer la colección entera.
+PedidoSchema.index({ telefono: 1, createdAt: -1 });
+
 //timestamp is used to store the time when the Pedido is created or updated
 module.exports = mongoose.model('Pedido', PedidoSchema);
