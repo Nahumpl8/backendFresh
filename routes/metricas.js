@@ -12,6 +12,7 @@ const router = require('express').Router();
 const Pedido = require('../models/Pedidos');
 const Clientes = require('../models/Clientes');
 const M = require('../utils/metricas');
+const { requireAdmin } = require('../utils/adminMiddleware');
 
 const SEMANAS_MAX = 104;
 const SEMANAS_DEFAULT = 12;
@@ -83,7 +84,8 @@ router.get('/reactivacion', async (req, res) => {
 });
 
 /** Mismo listado en CSV, ordenado por totalGastado descendente. */
-router.get('/reactivacion/csv', async (req, res) => {
+// Lleva nombre, teléfono y dirección: solo admin.
+router.get('/reactivacion/csv', requireAdmin, async (req, res) => {
     try {
         const filtro = { segmentoReactivacion: { $ne: null } };
         if (req.query.segmento) filtro.segmentoReactivacion = req.query.segmento;
