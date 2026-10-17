@@ -502,6 +502,10 @@ router.post('/new', async (req, res) => {
         // (NO se mezcla con `regalo`, que es el regalo por despensas / manual).
         const newPedido = new Pedido({
             ...req.body,
+            // Quién lo capturó: del token de admin, nunca de lo que mande el cliente.
+            ingresadoPor: req.admin && req.admin.sub
+                ? { usuario: req.admin.usuario, nombre: req.admin.nombre }
+                : { usuario: null, nombre: null },
             total: totalFinal,
             regaloPromo,
             vendedor,
@@ -840,8 +844,16 @@ router.get('/buscar-fecha', async (req, res) => {
         
         const pedidos = await Pedido.find({ 
             fecha: { $regex: fechaBusqueda, $options: 'i' } 
-        }).sort({ cliente: 1 });
-        
+        }).sort({ cliente: 1 }).lean();
+
+        // El correo vive en la ficha del cliente: se añade para el buscador de /pedidos.
+        const tels = [...new Set(pedidos.map((p) => String(p.telefono || '').replace(/\D/g, '').slice(-10)).filter((t) => t.length === 10))];
+        const fichas = tels.length
+            ? await Clientes.find({ telefono: { $in: tels } }).select('telefono email').lean()
+            : [];
+        const emailDe = new Map(fichas.map((c) => [String(c.telefono).slice(-10), c.email || '']));
+        for (const p of pedidos) p.emailCliente = emailDe.get(String(p.telefono || '').replace(/\D/g, '').slice(-10)) || '';
+
         res.json(pedidos);
     } catch (err) {
         console.error("Error buscando por fecha:", err);

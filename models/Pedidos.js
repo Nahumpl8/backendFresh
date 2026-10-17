@@ -16,6 +16,12 @@ const PedidoSchema = new mongoose.Schema({
     regalo: { type: String, required: false },
     editarPdf: { type: Boolean, required: false },
     vendedor: { type: String, required: false }, // ¿Quién cerró esta venta?
+    // Admin del panel que capturó el pedido (sale del token, no del body). Vacío
+    // en los de la tienda web y el bot. Solo para auditoría y búsqueda en /pedidos.
+    ingresadoPor: {
+        usuario: { type: String, default: null },
+        nombre: { type: String, default: null },
+    },
     comision: { type: Number, default: 0 },      // ¿Cuánto ganó? ($20 o $10)
     esClienteNuevo: { type: Boolean, default: false },
     puntosUsados: {
