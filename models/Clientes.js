@@ -162,4 +162,16 @@ ClienteSchema.pre('save', function (next) {
     next();
 });
 
+// 🔒 Nunca sale el PIN (cifrado reversible) ni los códigos de recuperación en una
+// respuesta: `pin` se convierte en true/null, que es lo único que usa la tienda
+// (AuthModal: ¿ya tiene PIN?). Afecta a res.json(doc); las consultas .lean() que
+// devuelven fichas deben seleccionar campos sin pin.
+const ocultarSecretos = (doc, ret) => {
+    ret.pin = ret.pin ? true : null;
+    delete ret.resetPinToken;
+    delete ret.resetPinExpires;
+    return ret;
+};
+ClienteSchema.set('toJSON', { transform: ocultarSecretos });
+
 module.exports = mongoose.model('Clientes', ClienteSchema);

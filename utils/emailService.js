@@ -50,7 +50,7 @@ const procesarTextoDinamico = (texto, cliente) => {
 const sendWelcomeEmail = async (email, nombre, clienteId) => {
     try {
         const appleLink = `https://backendfresh-production.up.railway.app/api/wallet/download/apple/${clienteId}`;
-        const googleLink = `https://backendfresh-production.up.railway.app/api/wallet/download/google/${clienteId}`;
+        const googleLink = `https://backendfresh-production.up.railway.app/api/wallet/google/${clienteId}`;
 
         const nombreLimpio = String(nombre || 'Cliente').split('-')[0].trim();
 
@@ -447,4 +447,23 @@ const sendOrderConfirmationEmail = async ({ email, nombre, refId, fecha, total, 
     }
 };
 
-module.exports = { sendWelcomeEmail, sendSmartEmail, sendPinRecoveryEmail, sendOrderConfirmationEmail };
+/** Código para restablecer la contraseña de un admin del panel. */
+const sendAdminResetEmail = async (email, nombre, codigo) => {
+    if (process.env.APP_ENTORNO === 'staging') {
+        console.log(`🧪 [staging] correo de recuperación de admin NO enviado (${email})`);
+        return;
+    }
+    const nombreCorto = String(nombre || '').split(' ')[0];
+    await transporter.sendMail({
+        from: '"Fresh Market" <pedidos@freshmarket.mx>',
+        to: email,
+        subject: 'Tu código para entrar al panel de Fresh Market',
+        html: `<div style="font-family:Arial,sans-serif;max-width:420px;margin:auto;padding:24px">
+            <p>Hola ${nombreCorto},</p>
+            <p>Tu código para restablecer la contraseña del panel es:</p>
+            <p style="font-size:32px;font-weight:bold;letter-spacing:6px;text-align:center">${codigo}</p>
+            <p>Vale 15 minutos. Si no lo pediste tú, ignora este correo.</p></div>`,
+    });
+};
+
+module.exports = { sendWelcomeEmail, sendSmartEmail, sendPinRecoveryEmail, sendOrderConfirmationEmail, sendAdminResetEmail };

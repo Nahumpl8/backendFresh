@@ -362,6 +362,9 @@ router.delete('/:id', async (req, res) => {
 });
 
 // Editar cliente
+// Lo que la tienda puede editar del perfil del cliente (UserProfileModal, CheckoutPage, PerfilPage).
+const CAMPOS_CLIENTE = ['nombre', 'email', 'telefonoSecundario', 'direccion', 'gpsLink', 'misDirecciones'];
+
 router.put('/edit/:id', async (req, res) => {
     try {
         const clienteAnterior = await Clientes.findById(req.params.id);
@@ -372,8 +375,18 @@ router.put('/edit/:id', async (req, res) => {
         const emailAnterior = clienteAnterior.email;
         const nuevoEmail = req.body.email ? req.body.email.toLowerCase().trim() : null;
 
+        // 🔒 Sin token de admin (la tienda) solo se pueden cambiar datos de contacto y
+        // direcciones: nunca puntos, sellos, PIN ni nada más. El panel (admin) edita todo.
+        let cambios = req.body;
+        if (!req.admin) {
+            cambios = {};
+            for (const k of CAMPOS_CLIENTE) if (k in req.body) cambios[k] = req.body[k];
+            const ignorados = Object.keys(req.body).filter((k) => !CAMPOS_CLIENTE.includes(k));
+            if (ignorados.length) console.warn(`🔒 edit/${req.params.id} sin admin: ignorados ${ignorados.join(', ')}`);
+        }
+
         // 👇 CAMBIO IMPORTANTE: Usar 'let' en lugar de 'const'
-        let updatedClientes = await Clientes.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
+        let updatedClientes = await Clientes.findByIdAndUpdate(req.params.id, { $set: cambios }, { new: true });
 
         // Enviar correo de bienvenida (Solo si es un correo NUEVO)
         if (req.body.email && updatedClientes.email) {
@@ -384,7 +397,7 @@ router.put('/edit/:id', async (req, res) => {
 
         // 👇 AGREGAR: Si quieres forzar el envío aunque ya tenga correo (solo para pruebas o correcciones)
         // Puedes agregar un flag en el body, por ejemplo: req.body.forceEmail
-        if (req.body.forceEmail && updatedClientes.email) {
+        if (req.admin && req.body.forceEmail && updatedClientes.email) {
             sendWelcomeEmail(updatedClientes.email, updatedClientes.nombre, updatedClientes._id.toString())
                 .catch(err => console.error('Error enviando correo forzado:', err));
         }
@@ -406,8 +419,7 @@ router.put('/edit/:id', async (req, res) => {
 router.get('/find/:id', async (req, res) => {
     try {
         const clientes = await Clientes.findById(req.params.id);
-        const { password, ...others } = clientes._doc;
-        res.status(200).json(others);
+        res.status(200).json(clientes);   // toJSON del modelo oculta el PIN y los códigos
     } catch (err) {
         console.error(err);
         res.status(500).json(err);

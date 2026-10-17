@@ -616,7 +616,7 @@ router.post('/new', async (req, res) => {
             // ---------------------------------------------
 
             responsePayload.walletLinks = {
-                apple: `${BASE_URL}/api/wallet/apple/${cliente._id}`,
+                apple: `${BASE_URL}/api/wallet/download/apple/${cliente._id}`,
                 google: `${BASE_URL}/api/wallet/google/${cliente._id}`
             };
         }

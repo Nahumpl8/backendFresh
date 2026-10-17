@@ -11,6 +11,10 @@ app.use(cors());
 app.options('*', cors());
 app.use(express.json({ limit: '25mb' })); // 25mb: las capturas en base64 (IA) superan el default de 100kb
 
+// 🔒 Protegido por defecto: toda /api/* exige admin salvo la lista pública
+// (utils/accesoApi.js). AUTH_MODO=observar solo registra; 'bloquear' corta.
+app.use('/api', require('./utils/accesoApi').accesoApi);
+
 // Archivos estáticos
 app.use('/public', express.static(path.join(__dirname, 'assets')));
 
