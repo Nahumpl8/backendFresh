@@ -13,6 +13,7 @@
  * repartidores (docs/plan-seguridad-sabado.md).
  */
 const { leerAdmin } = require('./adminMiddleware');
+const { leerRepartidor } = require('./repartidorAuth');
 
 const P = (metodo, patron, quien) => ({ metodo, re: new RegExp(`^${patron}/?$`), quien });
 const ID = '[^/]+';
@@ -54,17 +55,27 @@ const PUBLICAS = [
     // --- Login de admins ---
     P('POST', '/api/admin/(login|primer-acceso|olvide|restablecer)', 'login'),
 
-    // --- App de repartidores: TEMPORAL hasta que tenga PIN (sábado noche) ---
-    P('GET', '/api/repartidores', 'repartidores (temporal)'),
-    P('GET', '/api/rutas/hoy', 'repartidores (temporal)'),
-    P('PATCH', `/api/rutas/${ID}/pedido/${ID}`, 'repartidores (temporal)'),
-    P('POST', `/api/rutas/${ID}/cerrar`, 'repartidores (temporal)'),
-    P('GET', '/api/clientes/lite', 'repartidores (temporal)'),
-    P('GET', `/api/clientes/find/${ID}`, 'repartidores (temporal)'),
+    // --- Lista de nombres para el selector de la app de repartidores ---
+    P('GET', '/api/repartidores', 'repartidores (solo nombres)'),
+    P('POST', '/api/repartidores/login', 'repartidores (PIN)'),
 ];
 
+// Lo que usa la app de repartidores: con token de repartidor (o de admin).
+const REPARTIDOR = [
+    P('GET', '/api/rutas/hoy', 'repartidor'),
+    P('PATCH', `/api/rutas/${ID}/pedido/${ID}`, 'repartidor'),
+    P('POST', `/api/rutas/${ID}/cerrar`, 'repartidor'),
+    P('GET', '/api/clientes/lite', 'repartidor'),
+    P('GET', `/api/clientes/find/${ID}`, 'repartidor'),
+];
+
+const coincide = (lista, metodo, ruta) =>
+    lista.some((p) => new RegExp(`^(${p.metodo})$`).test(metodo) && p.re.test(ruta));
+// Mientras la app de repartidores no tenga PIN publicado, sus rutas siguen
+// abiertas. REPARTIDORES_ABIERTO=false las cierra (sábado 17 oct, noche).
+const repartidoresAbierto = () => String(process.env.REPARTIDORES_ABIERTO || '').toLowerCase() !== 'false';
 const esPublica = (metodo, ruta) =>
-    PUBLICAS.some((p) => new RegExp(`^(${p.metodo})$`).test(metodo) && p.re.test(ruta));
+    coincide(PUBLICAS, metodo, ruta) || (repartidoresAbierto() && coincide(REPARTIDOR, metodo, ruta));
 
 const bloquea = () => String(process.env.AUTH_MODO || '').toLowerCase() === 'bloquear';
 
@@ -86,6 +97,10 @@ async function accesoApi(req, res, next) {
         if (req.headers.authorization) {
             const admin = await leerAdmin(req);
             if (admin) { req.admin = admin; return next(); }
+            if (coincide(REPARTIDOR, req.method, ruta)) {
+                const rep = await leerRepartidor(req);
+                if (rep) { req.repartidor = rep; return next(); }
+            }
         }
         if (esPublica(req.method, ruta)) return next();
         if (!bloquea()) { avisar({ method: req.method, path: ruta, get: (h) => req.get(h) }); return next(); }
@@ -96,4 +111,4 @@ async function accesoApi(req, res, next) {
     }
 }
 
-module.exports = { accesoApi, esPublica, PUBLICAS };
+module.exports = { accesoApi, esPublica, PUBLICAS, REPARTIDOR };

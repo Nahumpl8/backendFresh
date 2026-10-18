@@ -16,6 +16,13 @@ const jwt = require('jsonwebtoken');
 
 const legacyActivo = () => String(process.env.ADMIN_LEGACY || '').toLowerCase() !== 'off';
 
+/**
+ * Clave de los tokens de admin y de repartidor. ADMIN_JWT_SEC es larga y solo
+ * para esto; JWT_SEC (corta) queda para los tokens de los clientes de la tienda.
+ * Mientras ADMIN_JWT_SEC no exista se usa JWT_SEC, para no cortar sesiones.
+ */
+const secretoAdmin = () => process.env.ADMIN_JWT_SEC || process.env.JWT_SEC;
+
 // Caché corta del estado activo: evita una consulta por petición.
 const CACHE_MS = 60 * 1000;
 const cacheActivo = new Map();
@@ -33,7 +40,7 @@ const olvidarAdmin = (id) => cacheActivo.delete(String(id));
 
 function verificarJwt(token) {
     return new Promise((ok) => {
-        jwt.verify(token, process.env.JWT_SEC, (err, payload) => ok(err ? null : payload));
+        jwt.verify(token, secretoAdmin(), (err, payload) => ok(err ? null : payload));
     });
 }
 
@@ -58,4 +65,4 @@ const requireAdmin = async (req, res, next) => {
     }
 };
 
-module.exports = { requireAdmin, leerAdmin, verificarJwt, olvidarAdmin, legacyActivo };
+module.exports = { requireAdmin, leerAdmin, verificarJwt, olvidarAdmin, legacyActivo, secretoAdmin };

@@ -53,9 +53,15 @@ router.get('/', requireAdmin, async (req, res) => {
 });
 
 // Obtener ruta del día por teléfono del repartidor (público con filtro)
+// Con token de repartidor, solo su propia ruta. Admin (o sin token mientras
+// REPARTIDORES_ABIERTO) puede todas.
+const esSuya = (req, ruta) => !req.repartidor || String(ruta.repartidorId) === String(req.repartidor.sub);
+
 router.get('/hoy', async (req, res) => {
     try {
-        const { telefono, fecha } = req.query;
+        const { fecha } = req.query;
+        // Un repartidor con sesión solo ve SU ruta: el teléfono sale del token.
+        const telefono = req.repartidor ? req.repartidor.telefono : req.query.telefono;
         if (!telefono) return res.status(400).json({ error: 'Falta telefono' });
         const rep = await Repartidor.findOne({ telefono });
         if (!rep) return res.status(404).json({ error: 'Repartidor no encontrado' });
@@ -82,6 +88,7 @@ router.patch('/:id/pedido/:pedidoId', async (req, res) => {
     try {
         const ruta = await Ruta.findById(req.params.id);
         if (!ruta) return res.status(404).json({ error: 'Ruta no encontrada' });
+        if (!esSuya(req, ruta)) return res.status(403).json({ error: 'Esta ruta no es tuya' });
         const pedido = ruta.pedidos.id(req.params.pedidoId);
         if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
 
@@ -104,6 +111,7 @@ router.post('/:id/cerrar', async (req, res) => {
     try {
         const ruta = await Ruta.findById(req.params.id);
         if (!ruta) return res.status(404).json({ error: 'Ruta no encontrada' });
+        if (!esSuya(req, ruta)) return res.status(403).json({ error: 'Esta ruta no es tuya' });
 
         const { pagos } = req.body || {};
         if (pagos && typeof pagos === 'object') {

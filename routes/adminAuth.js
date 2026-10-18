@@ -15,7 +15,7 @@ const router = require('express').Router();
 const jwt = require('jsonwebtoken');
 const Admin = require('../models/Admin');
 const { hashPassword, verificarPassword, passwordValida, generarCodigo, hashCodigo } = require('../utils/password');
-const { requireAdmin, verificarJwt, olvidarAdmin, legacyActivo } = require('../utils/adminMiddleware');
+const { requireAdmin, verificarJwt, olvidarAdmin, legacyActivo, secretoAdmin } = require('../utils/adminMiddleware');
 
 const DURACION = '7d';
 const MSG_PASSWORD = 'La contraseña debe tener al menos 8 caracteres, con letras y números.';
@@ -47,7 +47,7 @@ const MAX_FALLOS = 5;
 
 function tokenAdmin(a) {
     return jwt.sign({ role: 'fresh-admin', sub: String(a._id), usuario: a.usuario, nombre: a.nombre },
-        process.env.JWT_SEC, { expiresIn: DURACION });
+        secretoAdmin(), { expiresIn: DURACION });
 }
 const perfil = (a) => ({ nombre: a.nombre, usuario: a.usuario, email: a.email || null });
 
@@ -67,7 +67,7 @@ router.post('/login', async (req, res) => {
             if (legacyActivo() && password && process.env.ADMIN_PASSWORD && password === process.env.ADMIN_PASSWORD) {
                 limpiarFallos(claves);
                 console.log(`🔑 Login admin con contraseña compartida (ip ${ip})`);
-                return res.json({ token: jwt.sign({ role: 'fresh-admin' }, process.env.JWT_SEC, { expiresIn: '30d' }) });
+                return res.json({ token: jwt.sign({ role: 'fresh-admin' }, secretoAdmin(), { expiresIn: '30d' }) });
             }
             registrarFallo(claves);
             return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
@@ -85,7 +85,7 @@ router.post('/login', async (req, res) => {
             if (a.temporalExpira && a.temporalExpira < new Date()) {
                 return res.status(401).json({ error: 'Tu contraseña temporal caducó. Pide que te la renueven.' });
             }
-            const token = jwt.sign({ role: 'fresh-admin-setup', sub: String(a._id) }, process.env.JWT_SEC, { expiresIn: '30m' });
+            const token = jwt.sign({ role: 'fresh-admin-setup', sub: String(a._id) }, secretoAdmin(), { expiresIn: '30m' });
             return res.json({ primerAcceso: true, token, nombre: a.nombre });
         }
 
