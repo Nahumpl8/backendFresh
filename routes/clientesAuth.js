@@ -5,6 +5,7 @@ const CryptoJS = require('crypto-js');
 const jwt = require('jsonwebtoken');
 
 const { sendWelcomeEmail, sendPinRecoveryEmail } = require('../utils/emailService');
+const { generarTokenEnlace, generarCodigoCorto, caducaEn } = require('../utils/tokens');
 
 // Hash SHA-256 (para guardar el código de recuperación, no en plano)
 function hashCodigo(codigo) {
@@ -20,6 +21,90 @@ function limpiarTelefono(tel) {
 function esEmail(valor) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valor);
 }
+
+// ==========================================
+// VINCULAR TELEGRAM (genera el enlace / código)
+// ==========================================
+// Mismo patrón que forgot-pin/reset-pin de más abajo: token de un solo uso,
+// guardado hasheado y con caducidad de 15 minutos en el propio documento del
+// cliente. Aquí el "canal fuera de banda" no es el correo: es el propio enlace
+// de Telegram que abre el cliente.
+//
+// Requiere el JWT de cliente: la identidad ya está probada con teléfono + PIN,
+// así que no hay ambigüedad sobre a quién se vincula el chat.
+router.post('/telegram/link-token', async (req, res) => {
+    try {
+        const auth = req.headers.authorization || '';
+        if (!auth.startsWith('Bearer ')) return res.status(401).json({ error: 'No autenticado' });
+
+        let payload;
+        try {
+            payload = jwt.verify(auth.slice(7), process.env.JWT_SEC);
+        } catch (e) {
+            return res.status(401).json({ error: 'Sesión expirada' });
+        }
+        if (!payload || payload.tipo !== 'cliente') return res.status(403).json({ error: 'No autorizado' });
+
+        const cliente = await Clientes.findById(payload.id);
+        if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+        const bot = process.env.TELEGRAM_BOT_USERNAME;
+        if (!bot) return res.status(503).json({ error: 'Telegram no está configurado' });
+
+        // 32 hex: entra en los 64 caracteres del parámetro `start` y usa solo el
+        // juego permitido (A-Z a-z 0-9 _ -). Base64 no sirve: lleva + / =.
+        const token = generarTokenEnlace();
+        // Código corto para quien tiene Telegram con otro número y usa /vincular.
+        const codigo = generarCodigoCorto();
+
+        // Se guardan los HASHES; el token y el código solo existen en la respuesta.
+        cliente.telegramLinkToken = hashCodigo(token);
+        cliente.telegramLinkCodigo = hashCodigo(codigo);
+        cliente.telegramLinkExpires = caducaEn(15);
+        await cliente.save();
+
+        res.status(200).json({
+            url: `https://t.me/${bot}?start=${token}`,
+            codigo,   // para /vincular, si su Telegram tiene otro número
+            bot,
+            expiraEn: 15 * 60,
+            yaVinculado: Boolean(cliente.telegramId),
+        });
+    } catch (err) {
+        console.error('Error generando link de Telegram:', err);
+        res.status(500).json({ error: 'No se pudo generar el enlace' });
+    }
+});
+
+// Desvincular desde el perfil.
+router.post('/telegram/desvincular', async (req, res) => {
+    try {
+        const auth = req.headers.authorization || '';
+        if (!auth.startsWith('Bearer ')) return res.status(401).json({ error: 'No autenticado' });
+        let payload;
+        try { payload = jwt.verify(auth.slice(7), process.env.JWT_SEC); }
+        catch (e) { return res.status(401).json({ error: 'Sesión expirada' }); }
+        if (!payload || payload.tipo !== 'cliente') return res.status(403).json({ error: 'No autorizado' });
+
+        const cliente = await Clientes.findById(payload.id);
+        if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+        const chatId = cliente.telegramId;
+        cliente.telegramId = null;
+        cliente.telegramUsername = null;
+        cliente.telegramVinculadoAt = null;
+        await cliente.save();
+
+        if (chatId) {
+            const TelegramChat = require('../models/TelegramChat');
+            await TelegramChat.updateOne({ chatId }, { $set: { clienteId: null, vinculadoAt: null } });
+        }
+        res.status(200).json({ success: true });
+    } catch (err) {
+        console.error('Error desvinculando Telegram:', err);
+        res.status(500).json({ error: 'No se pudo desvincular' });
+    }
+});
 
 // ==========================================
 // SETUP PIN (Registro/Configuración inicial)

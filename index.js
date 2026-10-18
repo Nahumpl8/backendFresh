@@ -9,6 +9,22 @@ const cors = require('cors');
 dotenv.config();
 app.use(cors());
 app.options('*', cors());
+
+// --- TELEGRAM (opcional, apagado por defecto) ---
+// Todo el bloque vive detrás de TELEGRAM_ENABLED. Con el flag apagado no se
+// carga el módulo, no se monta ninguna ruta y no arranca ningún worker: el
+// servidor se comporta exactamente igual que antes de que esto existiera.
+//
+// Va ANTES del express.json global a propósito: necesita su propio límite de
+// 64 kb. Montado después, el parser de 25 MB ya habría leído el cuerpo y
+// dejaríamos un endpoint público aceptando 25 MB por petición.
+const TELEGRAM_ON = String(process.env.TELEGRAM_ENABLED || '').toLowerCase() === 'true';
+if (TELEGRAM_ON) {
+  const telegramRoute = require('./routes/telegram');
+  app.use('/api/telegram', express.json({ limit: '64kb' }), telegramRoute);
+  console.log('🤖 Telegram ACTIVADO (/api/telegram)');
+}
+
 app.use(express.json({ limit: '25mb' })); // 25mb: las capturas en base64 (IA) superan el default de 100kb
 
 // 🔒 Protegido por defecto: toda /api/* exige admin salvo la lista pública

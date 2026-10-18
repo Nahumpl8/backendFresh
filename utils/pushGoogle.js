@@ -3,6 +3,7 @@ const axios = require('axios');
 const GoogleWalletObject = require('../models/GoogleWalletObject');
 const Clientes = require('../models/Clientes');
 const MarketingCampaign = require('../models/MarketingCampaign'); 
+const { esStaging, bloqueado } = require('./entorno');
 
 // Función de espera (Delay) para darle tiempo a Google a procesar
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -54,6 +55,11 @@ async function getGoogleAccessToken() {
 
 // 👇 MODIFICADO: Acepta 'customData' para enviar mensajes manuales
 async function updateGoogleWalletObject(clientId, customData = null) {
+    // En staging no se toca la API de Google: los objetos de Wallet son los de
+    // producción (mismo issuer), así que un PATCH desde pruebas alteraría el pase
+    // real de un cliente y gastaría su cuota de 3 notificaciones/día.
+    if (esStaging()) { bloqueado('Google Wallet', String(clientId)); return; }
+
     if (!SERVICE_ACCOUNT) return;
 
     try {

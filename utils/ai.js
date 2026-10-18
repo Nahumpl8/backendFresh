@@ -3,8 +3,11 @@
  * La ANTHROPIC_API_KEY se lee del entorno (Railway). NUNCA en frontends.
  */
 const Anthropic = require('@anthropic-ai/sdk');
+const { esStaging, bloqueado } = require('./entorno');
 
-const client = new Anthropic(); // lee ANTHROPIC_API_KEY del env
+// En staging no se instancia el cliente: cada llamada a Claude se cobra a la
+// cuenta real, y las pruebas no necesitan respuestas de verdad.
+const client = esStaging() ? null : new Anthropic(); // lee ANTHROPIC_API_KEY del env
 // Haiku 4.5: barato y con buena visión para leer capturas. (Subir a sonnet/opus si una
 // feature necesita más precisión.) OJO: Haiku 4.5 NO soporta adaptive thinking ni effort.
 const MODEL = 'claude-haiku-4-5';
@@ -43,6 +46,16 @@ async function askVision({ images = [], text = '', systemPrompt = '', schema } =
     };
     if (systemPrompt) req.system = systemPrompt;
     if (schema) req.output_config = { format: { type: 'json_schema', schema } };
+
+    if (esStaging()) {
+        // 503 y no un objeto falso: así una ruta que dependa de la IA falla de
+        // forma visible en pruebas en vez de devolver datos inventados.
+        bloqueado('llamada a Anthropic', MODEL);
+        const err = new Error('IA desactivada en staging');
+        err.status = 503;
+        err.statusCode = 503;
+        throw err;
+    }
 
     const resp = await client.messages.create(req);
 

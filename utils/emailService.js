@@ -1,17 +1,26 @@
 const nodemailer = require('nodemailer');
 const path = require('path');
+const { esStaging, bloqueado } = require('./entorno');
 
-const transporter = nodemailer.createTransport({
-    host: process.env.EMAIL_HOST,
-    port: process.env.EMAIL_PORT,
-    secure: true,
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-    },
-    logger: false, // Menos ruido en consola
-    debug: false
-});
+// En staging NO se manda correo a nadie: `jsonTransport` compone el mensaje
+// completo (así se validan plantillas y variables) pero lo devuelve en memoria
+// en vez de entregarlo al SMTP. Sin esto, una prueba le escribiría a un cliente
+// real, porque el backend comparte código entre entornos.
+const transporter = esStaging()
+    ? nodemailer.createTransport({ jsonTransport: true })
+    : nodemailer.createTransport({
+        host: process.env.EMAIL_HOST,
+        port: process.env.EMAIL_PORT,
+        secure: true,
+        auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS
+        },
+        logger: false, // Menos ruido en consola
+        debug: false
+    });
+
+if (esStaging()) bloqueado('envío de correo', 'transporte jsonTransport, no sale nada');
 
 // 🧠 CEREBRO INTELIGENTE: Reemplaza variables en el texto
 // Ej: "Hola {{nombre}}, tienes {{puntos}} puntos. Te faltan {{20-sellos}} para el premio."

@@ -1,7 +1,8 @@
 const Promocion = require('../models/Promocion');
 
-// Canal del pedido a partir de `via` ('web' => web, cualquier otra cosa => manual)
-const canalDe = (via) => (via === 'web' ? 'web' : 'manual');
+// Canal del pedido a partir de `via`. Telegram cuenta como web: el cliente pide
+// solo, igual que en la tienda, así que recibe las mismas promos (decisión del 16 oct).
+const canalDe = (via) => (via === 'web' || via === 'telegram' ? 'web' : 'manual');
 
 // Promos activas que APLICARÍAN a este pedido (sin reclamar cupo).
 // Sirve para el endpoint /activas (mostrar al usuario) y como base del claim.

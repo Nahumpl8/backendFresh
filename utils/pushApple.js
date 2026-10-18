@@ -1,6 +1,7 @@
 const apn = require('apn');
 const path = require('path');
 const WalletDevice = require('../models/WalletDevice');
+const { esStaging, bloqueado } = require('./entorno');
 
 // =========================================================
 // CONFIGURACIÓN APN
@@ -11,13 +12,21 @@ const options = {
     production: true // Wallet siempre requiere production: true
 };
 
-const apnProvider = new apn.Provider(options);
+// En staging no se instancia el proveedor: los certificados de Apple viven en el
+// repo (no en variables), así que sin esta guarda staging SÍ podría empujar
+// notificaciones reales a los pases de clientes de producción.
+const apnProvider = esStaging() ? null : new apn.Provider(options);
 
 // =========================================================
 // FUNCIÓN PRINCIPAL DE NOTIFICACIÓN
 // =========================================================
 async function notifyPassUpdate(clientId) {
     const serialNumber = `FRESH-${clientId}`;
+
+    if (esStaging()) {
+        bloqueado('push Apple Wallet', serialNumber);
+        return { success: 0, failed: 0, staging: true };
+    }
 
     try {
         // 1. Buscar dispositivos registrados en Mongo

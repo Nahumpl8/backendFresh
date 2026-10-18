@@ -81,6 +81,25 @@ const ClienteSchema = new mongoose.Schema({
         default: 'whatsapp'
     },
     telegramId: { type: String, default: null },
+    telegramUsername: { type: String, default: null },
+    telegramVinculadoAt: { type: Date, default: null },
+
+    // Opt-in SOLO para campañas. Los mensajes transaccionales (su pedido, su
+    // premio) van siempre a quien se vinculó: para eso se vinculó.
+    telegramOptIn: { type: Boolean, default: true },
+    telegramOptOutAt: { type: Date, default: null },
+
+    // Token de un solo uso del deep link, mismo patrón que resetPinToken (:32).
+    // Se guarda HASHEADO: si alguien lee la base, no puede usar los pendientes.
+    telegramLinkToken: { type: String, default: null },
+    telegramLinkExpires: { type: Date, default: null },
+    // Código de 6 dígitos para `/vincular` (quien tiene Telegram con otro número).
+    // Separado del token del enlace: son dos secretos distintos con la misma caducidad.
+    telegramLinkCodigo: { type: String, default: null },
+
+    // Lista beta: mientras TELEGRAM_MODO sea 'beta', solo estos pueden usar el
+    // bot. El resto queda registrado en espera.
+    telegramBeta: { type: Boolean, default: false },
 
     // Fecha del último pedido. La calcula scripts/backfillMetricas.js desde la
     // colección de pedidos (no hay referencia por id: el enlace es el teléfono).
@@ -127,6 +146,11 @@ ClienteSchema.index({ nombre: 'text', telefono: 'text' });
 // Métricas: listados de reactivación y "clientes activos" ordenan por estos campos.
 ClienteSchema.index({ ultimaCompra: -1 });
 ClienteSchema.index({ segmentoReactivacion: 1 });
+ClienteSchema.index({ telegramBeta: 1 });
+// OJO: el índice único de `telegramId` NO se declara aquí. Es único parcial y,
+// si fallara, Mongoose solo lo registra en un evento y sigue: el servidor
+// arrancaría creyendo tener unicidad sin tenerla. Se crea a mano, una vez, con
+// scripts/crearIndiceTelegram.js, que sí avisa si algo sale mal.
 
 // ---------------------------------------------------------
 // 🚚 AUTO-ENVÍO al crear un cliente nuevo
@@ -170,6 +194,9 @@ const ocultarSecretos = (doc, ret) => {
     ret.pin = ret.pin ? true : null;
     delete ret.resetPinToken;
     delete ret.resetPinExpires;
+    delete ret.telegramLinkToken;
+    delete ret.telegramLinkExpires;
+    delete ret.telegramLinkCodigo;
     return ret;
 };
 ClienteSchema.set('toJSON', { transform: ocultarSecretos });

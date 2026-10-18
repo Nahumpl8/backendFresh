@@ -16,6 +16,7 @@ const apn = require('apn');
 
 const { notifyGoogleWalletUpdate } = require('../utils/pushGoogle');
 const notifyPassUpdate = require('../utils/pushApple');
+const { esStaging, bloqueado } = require('../utils/entorno');
 
 // SECRETOS Y CONFIGURACIÓN
 const WALLET_SECRET = process.env.WALLET_SECRET || 'fresh-market-secret-key-2025';
@@ -458,14 +459,20 @@ router.post('/notify-bulk', async (req, res) => {
     let failCount = 0;
 
     // Configuración APN (Apple)
+    // Esta ruta crea su PROPIO provider, así que no le sirve la guarda de
+    // utils/pushApple.js: hay que repetirla aquí o staging mandaría pushes reales.
     let apnProvider;
-    try {
-        const certPath = path.join(__dirname, '../certs/signerCert.pem');
-        const keyPath = path.join(__dirname, '../certs/signerKey.pem');
-        if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-            apnProvider = new apn.Provider({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath), production: true });
-        }
-    } catch (e) { console.error("⚠️ Error APN:", e.message); }
+    if (esStaging()) {
+        bloqueado('push masivo Apple Wallet', `${clientIds.length} clientes`);
+    } else {
+        try {
+            const certPath = path.join(__dirname, '../certs/signerCert.pem');
+            const keyPath = path.join(__dirname, '../certs/signerKey.pem');
+            if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+                apnProvider = new apn.Provider({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath), production: true });
+            }
+        } catch (e) { console.error("⚠️ Error APN:", e.message); }
+    }
 
     for (const clientId of clientIds) {
         try {
