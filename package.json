@@ -24,7 +24,7 @@
     "nodemon": "^3.1.0",
     "passkit-generator": "^3.5.6",
     "pdfkit": "^0.20.2",
-    "sharp": "^0.35.5",
+    "sharp": "^0.33.5",
     "stripe": "^14.24.0"
   }
 }
