@@ -45,6 +45,19 @@ function registrarFallo(claves) {
 const limpiarFallos = (claves) => claves.forEach((k) => fallos.delete(k));
 const MAX_FALLOS = 5;
 
+/**
+ * La gente escribe lo que recuerda: usuario, correo o celular. Se acepta
+ * cualquiera de los tres; la contraseña sigue siendo la misma.
+ */
+function buscarAdmin(identificador) {
+    const t = String(identificador || '').toLowerCase().trim();
+    const digitos = t.replace(/\D/g, '');
+    const o = [{ usuario: t }];
+    if (t.includes('@')) o.push({ email: t });
+    if (digitos.length >= 10 && digitos.length === t.replace(/[\s()+-]/g, '').length) o.push({ telefono: digitos.slice(-10) });
+    return Admin.findOne({ $or: o });
+}
+
 function tokenAdmin(a) {
     return jwt.sign({ role: 'fresh-admin', sub: String(a._id), usuario: a.usuario, nombre: a.nombre },
         secretoAdmin(), { expiresIn: DURACION });
@@ -73,7 +86,7 @@ router.post('/login', async (req, res) => {
             return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
         }
 
-        const a = await Admin.findOne({ usuario: String(usuario).toLowerCase().trim() }).select('+hash');
+        const a = await buscarAdmin(usuario).select('+hash');
         if (!a || !a.activo || !verificarPassword(password, a.hash)) {
             registrarFallo(claves);
             console.log(`🔒 Login admin fallido: ${String(usuario).slice(0, 30)} (ip ${ip})`);
@@ -155,8 +168,8 @@ router.post('/olvide', async (req, res) => {
         if (bloqueado(claves, 3)) return res.status(429).json({ error: 'Demasiados intentos. Espera 15 minutos.' });
         registrarFallo(claves);   // cuenta cada solicitud: máximo 3 cada 15 min
 
-        const a = await Admin.findOne({ usuario, activo: true });
-        if (!a || !a.email || a.temporal) return res.json(respuesta);
+        const a = await buscarAdmin(usuario);
+        if (!a || !a.activo || !a.email || a.temporal) return res.json(respuesta);
         const codigo = generarCodigo();
         a.resetCodigo = hashCodigo(codigo);
         a.resetExpira = new Date(Date.now() + 15 * 60 * 1000);
@@ -175,9 +188,9 @@ router.post('/restablecer', async (req, res) => {
     try {
         const { usuario, codigo, nueva } = req.body || {};
         if (!passwordValida(nueva)) return res.status(400).json({ error: MSG_PASSWORD });
-        const a = await Admin.findOne({ usuario: String(usuario || '').toLowerCase().trim(), activo: true }).select('+resetCodigo');
+        const a = await buscarAdmin(usuario).select('+resetCodigo');
         const invalido = () => res.status(400).json({ error: 'Código incorrecto o caducado.' });
-        if (!a || !a.resetCodigo || !a.resetExpira || a.resetExpira < new Date()) return invalido();
+        if (!a || !a.activo || !a.resetCodigo || !a.resetExpira || a.resetExpira < new Date()) return invalido();
         if (a.resetIntentos >= 5) return invalido();
         if (hashCodigo(String(codigo || '').trim()) !== a.resetCodigo) {
             a.resetIntentos += 1;
