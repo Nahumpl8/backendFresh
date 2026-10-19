@@ -38,8 +38,10 @@ const BASE = (process.env.TELEGRAM_WEBHOOK_BASE || 'https://backendfresh-product
     const c = await tg.setMyCommands(COMANDOS);
     console.log(c.ok ? `✅ ${COMANDOS.length} comandos` : `❌ comandos: ${c.desc}`);
 
-    const b = await tg.setBotonMenuTienda('Pedir', tg.urlTienda('boton-menu'));
-    console.log(b.ok ? '✅ Botón «Pedir»' : `❌ botón: ${b.desc}`);
+    // Botón junto a la caja de texto: lista de comandos con «Despensas» primero
+    // (la tienda en línea queda en el botón «🌐 Pedido vía web» del teclado).
+    const b = await tg.setBotonMenuComandos();
+    console.log(b.ok ? '✅ Botón «Menú» (comandos)' : `❌ botón: ${b.desc}`);
 
     const info = await tg.getWebhookInfo();
     if (info.ok) console.log(`Pendientes: ${info.resultado.pending_update_count} · último error: ${info.resultado.last_error_message || 'ninguno'}`);

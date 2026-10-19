@@ -85,9 +85,9 @@ async function comprobaciones() {
     await tg.setMyCommands(bot.COMANDOS);
     log(`✅ ${bot.COMANDOS.length} comandos registrados`);
 
-    // Botón fijo «Pedir» junto a la caja de texto: abre la tienda como Mini App.
-    const mb = await tg.setBotonMenuTienda('Pedir', tg.urlTienda('boton-menu'));
-    log(mb.ok ? `✅ Botón «Pedir» -> ${tg.urlTienda('boton-menu')}` : `⚠️ botón de menú: ${mb.desc}`);
+    // Botón «Menú»: lista de comandos con «Despensas» primero.
+    const mb = await tg.setBotonMenuComandos();
+    log(mb.ok ? '✅ Botón «Menú» (comandos)' : `⚠️ botón de menú: ${mb.desc}`);
 
     log('');
     log('─'.repeat(64));

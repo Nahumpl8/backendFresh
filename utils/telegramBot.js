@@ -1040,7 +1040,6 @@ function iniciarAvisosApertura(cadaMs = 5 * 60000) {
 
 /** Comandos que ve el usuario al pulsar "/". */
 const COMANDOS = [
-    { command: 'start', description: 'Conectar mi cuenta' },
     { command: 'despensas', description: 'Ver despensas y precios' },
     { command: 'lista', description: 'Lista de precios en PDF' },
     { command: 'missellos', description: 'Ver mis sellos' },
@@ -1049,6 +1048,7 @@ const COMANDOS = [
     { command: 'cancelar', description: 'Empezar un pedido de cero' },
     { command: 'ayuda', description: 'Ayuda' },
     { command: 'baja', description: 'Dejar de recibir promociones' },
+    { command: 'start', description: 'Conectar mi cuenta' },
 ];
 
 module.exports = {

@@ -147,6 +147,13 @@ const setBotonMenuTienda = (texto, url) =>
     });
 
 /**
+ * Botón junto a la caja de texto que despliega la lista de comandos (/despensas
+ * primero). Telegram no permite ponerle texto propio: dice «Menú».
+ */
+const setBotonMenuComandos = () =>
+    llamar('setChatMenuButton', { menu_button: { type: 'commands' } });
+
+/**
  * Envía un documento (PDF). `documento` puede ser un Buffer (se sube) o un
  * file_id de Telegram (reenvío instantáneo de algo ya subido).
  * Devuelve el resultado normal más `fileId` del documento enviado.
@@ -293,7 +300,7 @@ const quitarTeclado = () => ({ remove_keyboard: true });
 
 module.exports = {
     hayToken, escaparHTML, clasificarError, llamar,
-    getMe, enviarMensaje, enviarFoto, enviarAlbum, enviarAccion, setBotonMenuTienda, urlTienda,
+    getMe, enviarMensaje, enviarFoto, enviarAlbum, enviarAccion, setBotonMenuTienda, setBotonMenuComandos, urlTienda,
     responderBoton, descargarArchivo, enviarDocumento,
     setWebhook, deleteWebhook, getWebhookInfo, setMyCommands, getUpdates,
     tecladoCompartirTelefono, tecladoMenu, quitarTeclado,
