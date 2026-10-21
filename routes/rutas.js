@@ -93,6 +93,18 @@ router.get('/', requireAdmin, async (req, res) => {
 // REPARTIDORES_ABIERTO) puede todas.
 const esSuya = (req, ruta) => !req.repartidor || String(ruta.repartidorId) === String(req.repartidor.sub);
 
+// Borrar ruta (admin) — para rutas de prueba o asignadas por error
+router.delete('/:id', requireAdmin, async (req, res) => {
+    try {
+        const ruta = await Ruta.findByIdAndDelete(req.params.id);
+        if (!ruta) return res.status(404).json({ error: 'Ruta no encontrada' });
+        console.log(`🗑️ Ruta de ${ruta.repartidorNombre} del ${ruta.fechaReparto} (${ruta.pedidos.length} pedidos, ${ruta.estado}) borrada por ${req.admin && req.admin.usuario}`);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 router.get('/hoy', async (req, res) => {
     try {
         const { fecha } = req.query;
