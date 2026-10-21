@@ -2,6 +2,7 @@ const router = require('express').Router();
 const Ruta = require('../models/Ruta');
 const Repartidor = require('../models/Repartidor');
 const { requireAdmin } = require('../utils/adminMiddleware');
+const tg = require('../utils/telegram');
 
 const hoyStr = () => {
     // YYYY-MM-DD en zona local del servidor
@@ -37,6 +38,31 @@ const calcularTotales = (pedidos, gastos = []) => {
     }
     return t;
 };
+
+const pesos = (n) => '$' + Number(n || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 });
+
+/** Avisa por Telegram a los admins (TELEGRAM_ADMIN_IDS) que se cerró una ruta. */
+async function avisarCierreTelegram(ruta) {
+    const ids = String(process.env.TELEGRAM_ADMIN_IDS || '').split(',').map((x) => x.trim()).filter(Boolean);
+    if (!ids.length || !tg.hayToken()) return;
+    const e = tg.escaparHTML;
+    const t = ruta.totales;
+    const cambio = ruta.cambioInicial || 0;
+    const lineas = [
+        `🚚 <b>${e(ruta.repartidorNombre)}</b> cerró su ruta del ${e(ruta.fechaReparto)} · ${ruta.pedidos.length} pedidos`,
+        '',
+        `💵 Efectivo ${pesos(t.efectivo)} · 💳 Tarjeta ${pesos(t.tarjeta)} · 🏦 Transferencia ${pesos(t.transferencia)}`,
+    ];
+    if (ruta.gastos.length) {
+        lineas.push(`⛽ Gastos -${pesos(t.gastos)} (${ruta.gastos.map((g) => `${e(g.concepto)} ${pesos(g.monto)}`).join(', ')})`);
+    }
+    lineas.push(`💰 <b>Efectivo a entregar: ${pesos(t.efectivo + cambio - t.gastos)}</b> (con cambio ${pesos(cambio)})`);
+    if (t.cancelados.length) lineas.push(`❌ Canceló: ${t.cancelados.map(e).join(', ')}`);
+    for (const chatId of ids) {
+        const r = await tg.enviarMensaje({ chatId, texto: lineas.join('\n') });
+        if (!r.ok) console.log(`Telegram cierre de ruta a ${chatId}: ${r.desc || r.tipo}`);
+    }
+}
 
 // Crear ruta (admin)
 router.post('/', requireAdmin, async (req, res) => {
@@ -185,6 +211,9 @@ router.post('/:id/cerrar', async (req, res) => {
                 console.log('Email setup error:', e.message);
             }
         }
+
+        // Aviso por Telegram (no bloqueante)
+        avisarCierreTelegram(ruta).catch((e) => console.log('Telegram cerrar ruta error:', e.message));
 
         res.json(ruta);
     } catch (err) {
