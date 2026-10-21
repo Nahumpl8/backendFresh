@@ -93,6 +93,46 @@ router.get('/', requireAdmin, async (req, res) => {
 // REPARTIDORES_ABIERTO) puede todas.
 const esSuya = (req, ruta) => !req.repartidor || String(ruta.repartidorId) === String(req.repartidor.sub);
 
+// Campos de una entrega que puede editar el admin. Lo que captura el repartidor
+// (pago, descuento, notaRepartidor, pagoDetalle) se conserva.
+const CAMPOS_ENTREGA = ['raw', 'emoji', 'nombre', 'direccion', 'paquete', 'extras', 'cel', 'nota', 'regalo', 'reposicion', 'diaDetectado'];
+
+// Modificar ruta (admin): entregas (quitar, editar, añadir, reordenar), cambio y repartidor
+router.put('/:id', requireAdmin, async (req, res) => {
+    try {
+        const ruta = await Ruta.findById(req.params.id);
+        if (!ruta) return res.status(404).json({ error: 'Ruta no encontrada' });
+        const { pedidos, cambioInicial, repartidorId, fechaReparto } = req.body || {};
+
+        if (repartidorId && String(repartidorId) !== String(ruta.repartidorId)) {
+            const rep = /^[a-f0-9]{24}$/i.test(String(repartidorId)) ? await Repartidor.findById(repartidorId) : null;
+            if (!rep) return res.status(400).json({ error: 'Repartidor no encontrado' });
+            ruta.repartidorId = rep._id;
+            ruta.repartidorNombre = rep.nombre;
+        }
+        if (cambioInicial !== undefined) ruta.cambioInicial = Number(cambioInicial) || 0;
+        if (fechaReparto && /^\d{4}-\d{2}-\d{2}$/.test(fechaReparto)) ruta.fechaReparto = fechaReparto;
+
+        if (Array.isArray(pedidos)) {
+            if (!pedidos.length) return res.status(400).json({ error: 'La ruta debe tener al menos una entrega. Si ya no va, bórrala.' });
+            ruta.pedidos = pedidos.map((p) => {
+                const previo = p && p._id ? ruta.pedidos.id(p._id) : null;
+                const base = previo ? previo.toObject() : {};
+                for (const k of CAMPOS_ENTREGA) if (p[k] !== undefined) base[k] = p[k];
+                base.total = Number(p.total) || 0;
+                return base;
+            });
+        }
+
+        if (ruta.estado === 'cerrada') ruta.totales = calcularTotales(ruta.pedidos, ruta.gastos);
+        await ruta.save();
+        console.log(`✏️ Ruta de ${ruta.repartidorNombre} del ${ruta.fechaReparto} modificada por ${req.admin && req.admin.usuario} (${ruta.pedidos.length} entregas)`);
+        res.json(ruta);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Borrar ruta (admin) — para rutas de prueba o asignadas por error
 router.delete('/:id', requireAdmin, async (req, res) => {
     try {
