@@ -44,10 +44,20 @@ const RutaSchema = new mongoose.Schema(
             enum: ['pendiente', 'en_curso', 'cerrada'],
             default: 'pendiente',
         },
+        // Gastos del repartidor durante la ruta (gasolina, estacionamiento...):
+        // salen del efectivo que entrega.
+        gastos: [
+            {
+                concepto: String,
+                monto: { type: Number, default: 0 },
+                _id: false,
+            },
+        ],
         totales: {
             efectivo: { type: Number, default: 0 },
             tarjeta: { type: Number, default: 0 },
             transferencia: { type: Number, default: 0 },
+            gastos: { type: Number, default: 0 },
             cancelados: [String],
         },
         cerradaAt: Date,

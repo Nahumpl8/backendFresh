@@ -10,8 +10,18 @@ const hoyStr = () => {
     return new Date(d - tzOffset).toISOString().slice(0, 10);
 };
 
-const calcularTotales = (pedidos) => {
-    const t = { efectivo: 0, tarjeta: 0, transferencia: 0, cancelados: [] };
+// Máximo 10 gastos, concepto corto y monto positivo.
+const limpiarGastos = (gastos) => (Array.isArray(gastos) ? gastos : [])
+    .map((g) => ({
+        concepto: String((g && g.concepto) || '').trim().slice(0, 60) || 'Gasto',
+        monto: Math.round(Number(g && g.monto) * 100) / 100,
+    }))
+    .filter((g) => Number.isFinite(g.monto) && g.monto > 0 && g.monto <= 100000)
+    .slice(0, 10);
+
+const calcularTotales = (pedidos, gastos = []) => {
+    const t = { efectivo: 0, tarjeta: 0, transferencia: 0, gastos: 0, cancelados: [] };
+    for (const g of gastos) t.gastos += g.monto || 0;
     for (const p of pedidos) {
         const monto = (p.total || 0) - (p.descuento || 0);
         if (p.pago === 'efectivo') t.efectivo += monto;
@@ -113,7 +123,7 @@ router.post('/:id/cerrar', async (req, res) => {
         if (!ruta) return res.status(404).json({ error: 'Ruta no encontrada' });
         if (!esSuya(req, ruta)) return res.status(403).json({ error: 'Esta ruta no es tuya' });
 
-        const { pagos } = req.body || {};
+        const { pagos, gastos } = req.body || {};
         if (pagos && typeof pagos === 'object') {
             for (const pedido of ruta.pedidos) {
                 const reg = pagos[pedido._id?.toString()];
@@ -125,7 +135,8 @@ router.post('/:id/cerrar', async (req, res) => {
             }
         }
 
-        ruta.totales = calcularTotales(ruta.pedidos);
+        if (gastos !== undefined) ruta.gastos = limpiarGastos(gastos);
+        ruta.totales = calcularTotales(ruta.pedidos, ruta.gastos);
         ruta.estado = 'cerrada';
         ruta.cerradaAt = new Date();
         await ruta.save();
@@ -144,6 +155,11 @@ router.post('/:id/cerrar', async (req, res) => {
                     },
                 });
                 const t = ruta.totales;
+                const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+                const gastosHtml = ruta.gastos.length
+                    ? `<li>⛽ Gastos: -$${t.gastos} (${ruta.gastos.map((g) => `${esc(g.concepto)} $${g.monto}`).join(', ')})</li>`
+                    : '';
+                const aEntregar = t.efectivo + (ruta.cambioInicial || 0) - t.gastos;
                 transporter
                     .sendMail({
                         from: process.env.EMAIL_USER,
@@ -157,6 +173,8 @@ router.post('/:id/cerrar', async (req, res) => {
                               <li>💵 Efectivo: $${t.efectivo}</li>
                               <li>💳 Tarjeta: $${t.tarjeta}</li>
                               <li>🏦 Transferencia: $${t.transferencia}</li>
+                              ${gastosHtml}
+                              <li><strong>Efectivo a entregar (con cambio $${ruta.cambioInicial || 0}): $${aEntregar}</strong></li>
                               <li>❌ Cancelados: ${t.cancelados.join(', ') || '-'}</li>
                             </ul>
                             <p>Entra al panel para ver el detalle.</p>
