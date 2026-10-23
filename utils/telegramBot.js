@@ -152,7 +152,10 @@ async function vincularChat(chat, cliente, metodo) {
 async function buscarClientePorTelefono(telefono) {
     const t = limpiarTelefono(telefono);
     if (t.length !== 10) return null;
-    return Clientes.findOne({ telefono: { $regex: t + '$' } });
+    // Tolera fichas capturadas con espacios, guiones o paréntesis ("771 123 4567",
+    // "(771) 123-4567", "+52 771..."): entre dígito y dígito puede haber cualquier
+    // cosa que no sea dígito.
+    return Clientes.findOne({ telefono: { $regex: t.split('').join('\\D*') + '\\D*$' } });
 }
 
 // ---------------------------------------------------------------------------
