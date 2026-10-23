@@ -11,6 +11,10 @@ const hoyStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America
 // El repartidor puede corregir su cuenta cerrada solo el mismo día de la ruta.
 const puedeCorregir = (ruta) => ruta.estado === 'cerrada' && ruta.fechaReparto === hoyStr();
 
+// Campos de una entrega que puede editar el admin. Lo que captura el repartidor
+// (pago, descuento, notaRepartidor, pagoDetalle) se conserva.
+const CAMPOS_ENTREGA = ['raw', 'emoji', 'nombre', 'direccion', 'paquete', 'extras', 'cel', 'nota', 'regalo', 'reposicion', 'diaDetectado'];
+
 // Máximo 10 gastos, concepto corto y monto positivo.
 const limpiarGastos = (gastos) => (Array.isArray(gastos) ? gastos : [])
     .map((g) => ({
@@ -125,6 +129,60 @@ router.post('/', requireAdmin, async (req, res) => {
     }
 });
 
+// Crear todas las rutas del día de un jalón (admin), desde la nota completa.
+// Si un repartidor ya tiene ruta ese día: se reemplaza solo si sigue sin tocar
+// y el admin lo confirma (reemplazar: true).
+router.post('/lote', requireAdmin, async (req, res) => {
+    try {
+        const { fechaReparto, cambioInicial, rutas, reemplazar } = req.body || {};
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fechaReparto || ''))) return res.status(400).json({ error: 'Fecha inválida' });
+        if (!Array.isArray(rutas) || !rutas.length) return res.status(400).json({ error: 'No hay rutas' });
+        const ids = rutas.map((r) => String(r.repartidorId || ''));
+        if (ids.some((id) => !/^[a-f0-9]{24}$/i.test(id))) return res.status(400).json({ error: 'Falta elegir el repartidor de alguna ruta' });
+        if (new Set(ids).size !== ids.length) return res.status(400).json({ error: 'Un repartidor aparece en dos rutas' });
+        if (rutas.some((r) => !Array.isArray(r.pedidos) || !r.pedidos.length)) return res.status(400).json({ error: 'Hay una ruta sin entregas' });
+
+        const reps = await Repartidor.find({ _id: { $in: ids } });
+        if (reps.length !== ids.length) return res.status(400).json({ error: 'Repartidor no encontrado' });
+        const nombreDe = (id) => reps.find((r) => String(r._id) === String(id)).nombre;
+
+        const existentes = await Ruta.find({ fechaReparto, repartidorId: { $in: ids } });
+        const tocadas = existentes.filter((r) => r.estado !== 'pendiente' || r.pedidos.some((p) => p.pago));
+        if (tocadas.length) {
+            return res.status(409).json({
+                error: `${tocadas.map((r) => r.repartidorNombre).join(', ')} ya empezó su cuenta de ese día. Modifica esa ruta desde Resultados.`,
+            });
+        }
+        if (existentes.length && !reemplazar) {
+            return res.status(409).json({ existentes: existentes.map((r) => r.repartidorNombre) });
+        }
+
+        const docs = rutas.map((r) => {
+            const pedidos = r.pedidos.map((p) => {
+                const limpio = {};
+                for (const k of CAMPOS_ENTREGA) if (p[k] !== undefined && p[k] !== null) limpio[k] = p[k];
+                limpio.total = Number(p.total) || 0;
+                return limpio;
+            });
+            return {
+                fechaReparto,
+                diaSemana: (pedidos.find((p) => p.diaDetectado) || {}).diaDetectado || null,
+                repartidorId: r.repartidorId,
+                repartidorNombre: nombreDe(r.repartidorId),
+                cambioInicial: Number(r.cambioInicial ?? cambioInicial) || 0,
+                pedidos,
+            };
+        });
+
+        if (existentes.length) await Ruta.deleteMany({ _id: { $in: existentes.map((r) => r._id) } });
+        const creadas = await Ruta.insertMany(docs);
+        console.log(`📋 ${creadas.length} rutas del ${fechaReparto} subidas por ${req.admin && req.admin.usuario}${existentes.length ? ` (reemplazó ${existentes.length})` : ''}`);
+        res.status(201).json(creadas);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Listar rutas por fecha (admin)
 router.get('/', requireAdmin, async (req, res) => {
     try {
@@ -143,10 +201,6 @@ router.get('/', requireAdmin, async (req, res) => {
 // Con token de repartidor, solo su propia ruta. Admin (o sin token mientras
 // REPARTIDORES_ABIERTO) puede todas.
 const esSuya = (req, ruta) => !req.repartidor || String(ruta.repartidorId) === String(req.repartidor.sub);
-
-// Campos de una entrega que puede editar el admin. Lo que captura el repartidor
-// (pago, descuento, notaRepartidor, pagoDetalle) se conserva.
-const CAMPOS_ENTREGA = ['raw', 'emoji', 'nombre', 'direccion', 'paquete', 'extras', 'cel', 'nota', 'regalo', 'reposicion', 'diaDetectado'];
 
 // Modificar ruta (admin): entregas (quitar, editar, añadir, reordenar), cambio y repartidor
 router.put('/:id', requireAdmin, async (req, res) => {
