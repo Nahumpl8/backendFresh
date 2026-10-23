@@ -3,6 +3,7 @@ const Ruta = require('../models/Ruta');
 const Repartidor = require('../models/Repartidor');
 const { requireAdmin } = require('../utils/adminMiddleware');
 const tg = require('../utils/telegram');
+const asistente = require('../utils/rutasAsistente');
 
 // YYYY-MM-DD en hora de México. El servidor corre en UTC: con la hora local del
 // servidor, después de las 6 pm ya era "mañana" y el repartidor no encontraba su ruta.
@@ -179,6 +180,32 @@ router.post('/lote', requireAdmin, async (req, res) => {
         console.log(`📋 ${creadas.length} rutas del ${fechaReparto} subidas por ${req.admin && req.admin.usuario}${existentes.length ? ` (reemplazó ${existentes.length})` : ''}`);
         res.status(201).json(creadas);
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Asistente de rutas con IA (admin): propone cambios; se aplican aparte al confirmar.
+router.post('/asistente', requireAdmin, async (req, res) => {
+    try {
+        const { fecha, messages, texto, resultadoPropuesta } = req.body || {};
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha || ''))) return res.status(400).json({ error: 'Fecha inválida' });
+        if (!String(texto || '').trim()) return res.status(400).json({ error: 'Escribe una instrucción' });
+        const r = await asistente.conversar({ fecha, messages, texto: String(texto).slice(0, 8000), resultadoPropuesta });
+        res.json(r);
+    } catch (err) {
+        console.error('❌ asistente de rutas:', err.message);
+        res.status(err.status || 500).json({ error: err.status === 503 ? err.message : 'El asistente no respondió. Intenta de nuevo.' });
+    }
+});
+
+router.post('/asistente/aplicar', requireAdmin, async (req, res) => {
+    try {
+        const { fecha, operaciones } = req.body || {};
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha || ''))) return res.status(400).json({ error: 'Fecha inválida' });
+        if (!Array.isArray(operaciones) || !operaciones.length) return res.status(400).json({ error: 'No hay cambios' });
+        res.json(await asistente.aplicarOperaciones({ fecha, operaciones, usuario: req.admin && req.admin.usuario }));
+    } catch (err) {
+        console.error('❌ aplicar asistente de rutas:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
