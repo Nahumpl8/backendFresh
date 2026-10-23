@@ -61,6 +61,19 @@ const RutaSchema = new mongoose.Schema(
             cancelados: [String],
         },
         cerradaAt: Date,
+        // Primera cuenta que envió el repartidor (antes de cualquier corrección)
+        // y la lista de correcciones, para que siempre se vea qué se reportó.
+        cierreOriginal: { type: mongoose.Schema.Types.Mixed, default: null },
+        correcciones: [
+            {
+                at: Date,
+                por: String,
+                cambios: [String],
+                totalesAntes: mongoose.Schema.Types.Mixed,
+                totalesDespues: mongoose.Schema.Types.Mixed,
+                _id: false,
+            },
+        ],
     },
     { timestamps: true }
 );

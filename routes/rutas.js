@@ -4,12 +4,12 @@ const Repartidor = require('../models/Repartidor');
 const { requireAdmin } = require('../utils/adminMiddleware');
 const tg = require('../utils/telegram');
 
-const hoyStr = () => {
-    // YYYY-MM-DD en zona local del servidor
-    const d = new Date();
-    const tzOffset = d.getTimezoneOffset() * 60000;
-    return new Date(d - tzOffset).toISOString().slice(0, 10);
-};
+// YYYY-MM-DD en hora de México. El servidor corre en UTC: con la hora local del
+// servidor, después de las 6 pm ya era "mañana" y el repartidor no encontraba su ruta.
+const hoyStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
+
+// El repartidor puede corregir su cuenta cerrada solo el mismo día de la ruta.
+const puedeCorregir = (ruta) => ruta.estado === 'cerrada' && ruta.fechaReparto === hoyStr();
 
 // Máximo 10 gastos, concepto corto y monto positivo.
 const limpiarGastos = (gastos) => (Array.isArray(gastos) ? gastos : [])
@@ -39,20 +39,71 @@ const calcularTotales = (pedidos, gastos = []) => {
     return t;
 };
 
+// Foto de lo que reportó el repartidor, para comparar en una corrección.
+// Se copia con JSON para que no quede ligada al documento de Mongoose.
+const fotoCuenta = (ruta) => JSON.parse(JSON.stringify({
+    at: new Date(),
+    totales: ruta.totales,
+    gastos: ruta.gastos.map((g) => ({ concepto: g.concepto, monto: g.monto })),
+    pagos: ruta.pedidos.map((p) => ({
+        pedidoId: p._id,
+        nombre: p.nombre,
+        pago: p.pago || null,
+        descuento: p.descuento || 0,
+        pagoDetalle: p.pagoDetalle || null,
+    })),
+}));
+
+const describirPago = (p) => {
+    if (!p || !p.pago) return 'sin capturar';
+    let txt = p.pago;
+    if (p.pago === 'combinado' && p.pagoDetalle) {
+        const d = p.pagoDetalle;
+        txt += ` (${['efectivo', 'tarjeta', 'transferencia'].filter((k) => d[k]).map((k) => `${k} $${d[k]}`).join(', ')})`;
+    }
+    if (p.descuento) txt += `, desc. $${p.descuento}`;
+    return txt;
+};
+
+/** Lista legible de lo que cambió entre la cuenta anterior y la nueva. */
+const cambiosCuenta = (antes, despues) => {
+    const cambios = [];
+    for (const d of despues.pagos) {
+        const a = antes.pagos.find((x) => String(x.pedidoId) === String(d.pedidoId));
+        const txtA = describirPago(a);
+        const txtD = describirPago(d);
+        if (txtA !== txtD) cambios.push(`${d.nombre}: ${txtA} → ${txtD}`);
+    }
+    if ((antes.totales.gastos || 0) !== (despues.totales.gastos || 0)) {
+        cambios.push(`Gastos: $${antes.totales.gastos || 0} → $${despues.totales.gastos || 0}`);
+    }
+    return cambios;
+};
+
 const pesos = (n) => '$' + Number(n || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 });
 
 /** Avisa por Telegram a los admins (TELEGRAM_ADMIN_IDS) que se cerró una ruta. */
-async function avisarCierreTelegram(ruta) {
+async function avisarCierreTelegram(ruta, correccion) {
     const ids = String(process.env.TELEGRAM_ADMIN_IDS || '').split(',').map((x) => x.trim()).filter(Boolean);
     if (!ids.length || !tg.hayToken()) return;
     const e = tg.escaparHTML;
     const t = ruta.totales;
     const cambio = ruta.cambioInicial || 0;
-    const lineas = [
-        `🚚 <b>${e(ruta.repartidorNombre)}</b> cerró su ruta del ${e(ruta.fechaReparto)} · ${ruta.pedidos.length} pedidos`,
-        '',
+    const lineas = correccion
+        ? [
+            `✏️ <b>${e(ruta.repartidorNombre)}</b> corrigió su cuenta del ${e(ruta.fechaReparto)}`,
+            ...correccion.cambios.map((c) => `• ${e(c)}`),
+            `Efectivo a entregar: ${pesos(correccion.aEntregarAntes)} → <b>${pesos(correccion.aEntregarDespues)}</b>`,
+            '',
+            '<b>Cuenta nueva:</b>',
+        ]
+        : [
+            `🚚 <b>${e(ruta.repartidorNombre)}</b> cerró su ruta del ${e(ruta.fechaReparto)} · ${ruta.pedidos.length} pedidos`,
+            '',
+        ];
+    lineas.push(
         `💵 Efectivo ${pesos(t.efectivo)} · 💳 Tarjeta ${pesos(t.tarjeta)} · 🏦 Transferencia ${pesos(t.transferencia)}`,
-    ];
+    );
     if (ruta.gastos.length) {
         lineas.push(`⛽ Gastos -${pesos(t.gastos)} (${ruta.gastos.map((g) => `${e(g.concepto)} ${pesos(g.monto)}`).join(', ')})`);
     }
@@ -165,7 +216,7 @@ router.get('/hoy', async (req, res) => {
             }).sort({ fechaReparto: -1 });
         }
         if (!ruta) return res.status(404).json({ error: 'Sin ruta' });
-        res.json(ruta);
+        res.json({ ...ruta.toObject(), puedeCorregir: puedeCorregir(ruta) });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -177,6 +228,8 @@ router.patch('/:id/pedido/:pedidoId', async (req, res) => {
         const ruta = await Ruta.findById(req.params.id);
         if (!ruta) return res.status(404).json({ error: 'Ruta no encontrada' });
         if (!esSuya(req, ruta)) return res.status(403).json({ error: 'Esta ruta no es tuya' });
+        // Ruta ya cerrada: la corrección se manda completa al volver a confirmar.
+        if (ruta.estado === 'cerrada') return res.status(409).json({ error: 'La ruta ya está cerrada' });
         const pedido = ruta.pedidos.id(req.params.pedidoId);
         if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
 
@@ -201,6 +254,13 @@ router.post('/:id/cerrar', async (req, res) => {
         if (!ruta) return res.status(404).json({ error: 'Ruta no encontrada' });
         if (!esSuya(req, ruta)) return res.status(403).json({ error: 'Esta ruta no es tuya' });
 
+        // Volver a confirmar una ruta cerrada = corrección: el repartidor solo el mismo día.
+        const esCorreccion = ruta.estado === 'cerrada';
+        if (esCorreccion && req.repartidor && !puedeCorregir(ruta)) {
+            return res.status(403).json({ error: 'Ya no puedes corregir esta cuenta (solo el mismo día). Pídele a un admin que la corrija.' });
+        }
+        const antes = esCorreccion ? fotoCuenta(ruta) : null;
+
         const { pagos, gastos } = req.body || {};
         if (pagos && typeof pagos === 'object') {
             for (const pedido of ruta.pedidos) {
@@ -217,6 +277,30 @@ router.post('/:id/cerrar', async (req, res) => {
         ruta.totales = calcularTotales(ruta.pedidos, ruta.gastos);
         ruta.estado = 'cerrada';
         ruta.cerradaAt = new Date();
+
+        let correccion = null;
+        if (esCorreccion) {
+            const despues = fotoCuenta(ruta);
+            const cambio = ruta.cambioInicial || 0;
+            correccion = {
+                cambios: cambiosCuenta(antes, despues),
+                aEntregarAntes: antes.totales.efectivo + cambio - (antes.totales.gastos || 0),
+                aEntregarDespues: despues.totales.efectivo + cambio - (despues.totales.gastos || 0),
+            };
+            // Sin cambios reales: no se registra ni se avisa.
+            if (!correccion.cambios.length) {
+                await ruta.save();
+                return res.json(ruta);
+            }
+            if (!ruta.cierreOriginal) ruta.cierreOriginal = antes;
+            ruta.correcciones.push({
+                at: new Date(),
+                por: req.repartidor ? 'repartidor' : (req.admin && req.admin.usuario) || 'admin',
+                cambios: correccion.cambios,
+                totalesAntes: antes.totales,
+                totalesDespues: despues.totales,
+            });
+        }
         await ruta.save();
 
         // Email opcional al admin (no bloqueante)
@@ -242,9 +326,14 @@ router.post('/:id/cerrar', async (req, res) => {
                     .sendMail({
                         from: process.env.EMAIL_USER,
                         to: process.env.ADMIN_EMAIL,
-                        subject: `🚚 ${ruta.repartidorNombre} cerró su ruta del ${ruta.fechaReparto}`,
+                        subject: correccion
+                            ? `✏️ ${ruta.repartidorNombre} corrigió su cuenta del ${ruta.fechaReparto}`
+                            : `🚚 ${ruta.repartidorNombre} cerró su ruta del ${ruta.fechaReparto}`,
                         html: `
-                            <h2>${ruta.repartidorNombre} terminó su ruta</h2>
+                            ${correccion ? `<h2>${esc(ruta.repartidorNombre)} corrigió su cuenta</h2>
+                            <ul>${correccion.cambios.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
+                            <p>Efectivo a entregar: $${correccion.aEntregarAntes} → <strong>$${correccion.aEntregarDespues}</strong></p>
+                            <h3>Cuenta nueva</h3>` : `<h2>${esc(ruta.repartidorNombre)} terminó su ruta</h2>`}
                             <p><strong>Fecha:</strong> ${ruta.fechaReparto} (${ruta.diaSemana || ''})</p>
                             <p><strong>Pedidos:</strong> ${ruta.pedidos.length}</p>
                             <ul>
@@ -265,7 +354,7 @@ router.post('/:id/cerrar', async (req, res) => {
         }
 
         // Aviso por Telegram (no bloqueante)
-        avisarCierreTelegram(ruta).catch((e) => console.log('Telegram cerrar ruta error:', e.message));
+        avisarCierreTelegram(ruta, correccion).catch((e) => console.log('Telegram cerrar ruta error:', e.message));
 
         res.json(ruta);
     } catch (err) {
