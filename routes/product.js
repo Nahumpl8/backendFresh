@@ -56,6 +56,32 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
+// Más vendidos (público, para ordenar el catálogo de la tienda): cuántas veces
+// salió cada producto suelto/extra en los pedidos de los últimos 60 días.
+// Solo cuenta por id de producto; no expone nada de clientes. Cache de 1 hora.
+let cacheMasVendidos = { at: 0, data: null };
+router.get('/mas-vendidos', async (req, res) => {
+    try {
+        if (!cacheMasVendidos.data || Date.now() - cacheMasVendidos.at > 60 * 60 * 1000) {
+            const Pedido = require('../models/Pedidos');
+            const desde = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+            const filas = await Pedido.aggregate([
+                { $match: { createdAt: { $gte: desde } } },
+                { $unwind: '$newProducts' },
+                { $group: { _id: { $toString: '$newProducts._id' }, veces: { $sum: 1 } } },
+            ]);
+            const data = {};
+            for (const f of filas) if (f._id && f._id !== 'null') data[f._id] = f.veces;
+            cacheMasVendidos = { at: Date.now(), data };
+        }
+        res.set('Cache-Control', 'public, max-age=3600');
+        res.status(200).json(cacheMasVendidos.data);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'No se pudo calcular' });
+    }
+});
+
 //GET PRODUCTS
 router.get('/find/:id', async (req, res) => {
     try {

@@ -22,6 +22,7 @@ const PUBLICAS = [
     // --- Tienda: catálogo y configuración ---
     P('GET', '/api/products', 'tienda'),
     P('GET', `/api/products/find/${ID}`, 'catálogo'),
+    P('GET', '/api/products/mas-vendidos', 'tienda: orden del catálogo'),
     P('GET', '/api/despensas', 'tienda'),
     P('GET', `/api/despensas/find/${ID}`, 'catálogo'),
     P('GET', '/api/app-config', 'tienda'),
