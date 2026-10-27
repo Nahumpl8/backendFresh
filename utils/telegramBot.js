@@ -18,6 +18,7 @@ const { hashCodigo, generarCodigoCorto, caducaEn } = require('./tokens');
 const agente = require('./telegramAgente');
 const lista = require('./telegramLista');
 const registro = require('./telegramRegistro');
+const equipo = require('./telegramEquipo');
 const { pedidosCerrados } = require('./telegramPedidos');
 const AppConfig = require('../models/AppConfig');
 
@@ -219,8 +220,8 @@ const TEXTOS = {
 
     noEncontrado:
         'No encontré una cuenta con ese teléfono 🤔\n\n' +
-        'Puede que compres con otro número. Escríbenos y lo revisamos: ' +
-        'https://wa.me/527712346620',
+        'Por ahora el pedido por Telegram está abierto solo a un grupo de clientes. ' +
+        'Ya le avisé al equipo y te escriben aquí mismo 🙌',
 
     tokenInvalido:
         'Ese enlace ya no es válido (caducan a los 15 minutos) ⏳\n\n' +
@@ -255,8 +256,7 @@ const TEXTOS = {
         '📦 /mipedido — tu último pedido\n' +
         '🔄 /cancelar — empezar un pedido de cero\n' +
         '🔕 /baja — dejar de recibir promociones\n\n' +
-        'Para cualquier duda, escríbenos por WhatsApp: ' +
-        'https://wa.me/527712346620',
+        'Si tienes una duda que yo no pueda resolver, se la paso al equipo y te contestan aquí mismo 🙌',
 };
 
 // ---------------------------------------------------------------------------
@@ -306,6 +306,32 @@ async function manejarStart(chat, from, parametro) {
  * contacto de otra persona; sin esta comprobación, cualquiera podría vincularse
  * a la ficha ajena y ver sus puntos, su dirección y sus premios.
  */
+/** Dice en el grupo su id, para ponerlo en TELEGRAM_GRUPO_EQUIPO. */
+async function avisarIdGrupo(chat) {
+    const ya = equipo.esGrupoEquipo(chat.id);
+    return tg.enviarMensaje({
+        chatId: chat.id,
+        texto: ya
+            ? '✅ Este es el grupo del equipo. Aquí les paso las dudas de los clientes; contesten con «Responder» sobre mi mensaje y se lo mando al cliente.'
+            : `👋 Hola. El id de este grupo es <code>${E(String(chat.id))}</code>.\n\nPara que aquí lleguen las dudas de los clientes, pongan ese número en la variable <code>TELEGRAM_GRUPO_EQUIPO</code> del backend.`,
+    });
+}
+
+/** Le pasa al equipo la duda de un cliente vinculado (lo usa el agente y los errores). */
+async function pasarAlEquipo(chat, pregunta, motivo = 'duda') {
+    const cliente = chat.clienteId ? await Clientes.findById(chat.clienteId).lean() : null;
+    let contexto = '';
+    if (cliente) {
+        const ultimo = await Pedido.findOne({ telefono: { $regex: limpiarTelefono(cliente.telefono) + '$' } })
+            .sort({ createdAt: -1 }).lean();
+        if (ultimo) contexto = `Último pedido: ${ultimo.despensa} $${Math.round(ultimo.total || 0)} · ${ultimo.fecha || ''}`;
+    }
+    return equipo.preguntarAlEquipo({
+        clienteChatId: chat.chatId, motivo, pregunta, contexto,
+        nombre: cliente ? cliente.nombre : '', telefono: cliente ? cliente.telefono : chat.telefono,
+    });
+}
+
 async function manejarContacto(chat, from, contact) {
     if (!contact.user_id || String(contact.user_id) !== String(from.id)) {
         return responder(chat.chatId, TEXTOS.contactoAjeno, tg.tecladoCompartirTelefono());
@@ -321,6 +347,12 @@ async function manejarContacto(chat, from, contact) {
         await TelegramChat.updateOne({ _id: chat._id }, { $set: { telefono } });
         // En modo público se le da de alta aquí mismo; en beta, solo entra la lista.
         if (modo === 'publico') return registro.empezar(chat, telefono, depsRegistro());
+        await equipo.preguntarAlEquipo({
+            clienteChatId: chat.chatId, telefono,
+            nombre: [from.first_name, from.last_name].filter(Boolean).join(' '),
+            motivo: 'sin-ficha-beta', unaVezCadaMin: 60 * 24,
+            pregunta: 'Quiere pedir por Telegram, pero su teléfono no está en la base y el bot está en modo beta (solo la lista de prueba). Pásalo a modo público en el panel o dale de alta y agrégalo a la lista beta.',
+        });
         return responder(chat.chatId, TEXTOS.noEncontrado, tg.quitarTeclado());
     }
 
@@ -576,6 +608,7 @@ async function conversarConAgente(chat, contenido) {
             chatId: chat.chatId, clienteId: chat.clienteId, contenido,
             // Las fotos se mandan en el momento en que el agente las pide, así
             // llegan antes de su mensaje de texto.
+            preguntarEquipo: (pregunta) => pasarAlEquipo(chat, pregunta),
             enviarLista: () => lista.enviarLista(chat.chatId, {
                 avisar: () => responder(chat.chatId, 'Te preparo la lista con los precios de hoy, dame unos segundos ⏳'),
             }),
@@ -591,8 +624,11 @@ async function conversarConAgente(chat, contenido) {
         });
     } catch (e) {
         console.error('❌ agente:', e.status || '', e.message);
-        texto = 'Uy, tuve un problema para responderte 😓 Intenta de nuevo en un momento, ' +
-            'o escríbenos por WhatsApp: https://wa.me/527712346620';
+        const escrito = (contenido.find((b) => b.type === 'text') || {}).text || '(mandó una foto)';
+        const avisado = await pasarAlEquipo(chat, `El bot no pudo responder. El cliente escribió: «${escrito}»`, 'error-bot').catch(() => false);
+        texto = avisado
+            ? 'Uy, tuve un problema para responderte 😓 Ya le pasé tu mensaje al equipo y te contestan aquí mismo.'
+            : 'Uy, tuve un problema para responderte 😓 Intenta de nuevo en un momento.';
     }
     // El agente escribe texto plano: se escapa todo para que un "<" no rompa el envío.
     for (const parte of trozos(texto)) await responder(chat.chatId, E(parte), tg.tecladoMenu());
@@ -766,6 +802,11 @@ async function procesarUpdate(update) {
         if (update.my_chat_member) {
             const { chat, new_chat_member } = update.my_chat_member;
             const estado = new_chat_member && new_chat_member.status;
+            // Al bot lo agregaron a un grupo: dice el id para configurarlo como grupo del equipo.
+            if (chat.type === 'group' || chat.type === 'supergroup') {
+                if (estado === 'member' || estado === 'administrator') await avisarIdGrupo(chat);
+                return;
+            }
             const bloqueado = estado === 'kicked' || estado === 'left';
             await TelegramChat.updateOne(
                 { chatId: String(chat.id) },
@@ -780,8 +821,17 @@ async function procesarUpdate(update) {
         const msg = update.message || update.edited_message;
         if (!msg || !msg.chat) return;
 
-        // Solo chats privados: los de grupo se tratarán en el handoff (Paso 3).
-        if (msg.chat.type !== 'private') return;
+        // Grupos: solo el del equipo, y solo respuestas a mensajes del bot (o /grupo).
+        if (msg.chat.type !== 'private') {
+            if (/^\/grupo\b/.test(String(msg.text || ''))) return await avisarIdGrupo(msg.chat);
+            if (equipo.esGrupoEquipo(msg.chat.id) && update.message) await equipo.manejarRespuesta(msg);
+            return;
+        }
+
+        // Un admin contesta en privado a una duda que le pasó el bot (cuando aún no hay grupo).
+        if (update.message && msg.reply_to_message && lista.esAdmin(msg.from.id)) {
+            if (await equipo.manejarRespuesta(msg)) return;
+        }
 
         const chat = await registrarChat(msg.from, msg.chat);
         const texto = String(msg.text || '').trim();
