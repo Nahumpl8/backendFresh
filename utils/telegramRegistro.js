@@ -96,11 +96,14 @@ async function ofrecerColonias(chat, texto, responder) {
     }
 
     if (!filas.length) {
+        // Se guarda lo que escribió por si pide ayuda al equipo con el botón.
+        await guardar(chat, { ...chat.registro, ultimaBusqueda: texto.slice(0, 100) });
         return responder(chat.chatId,
             'No encontré esa zona en nuestras rutas de entrega 😔\n\n' +
             'Si vives en Acayuca, Zapotlán, Tolcayuca o Tizayuca, escríbeme el nombre del pueblo.\n' +
             'Revisa el código postal o escribe el nombre de tu colonia. ' +
-            'Si crees que sí llegamos, escríbenos: https://wa.me/527712346620');
+            'Si de verdad no aparece, le pregunto al equipo si llegamos 👇',
+            { inline_keyboard: [[{ text: '🙋 No aparece, pregúntale al equipo', callback_data: 'reg:equipo' }]] });
     }
     if (filas.length > MAX_COLONIAS) {
         return responder(chat.chatId, `Hay ${filas.length} colonias con ese nombre 😅 Mejor mándame tu código postal.`);
@@ -232,13 +235,23 @@ async function manejarBoton(chat, data, deps) {
             'Ahora escríbeme tu <b>calle y número</b>, con alguna referencia para el repartidor.\n' +
             '<i>Ejemplo: Av. Juárez 120, casa blanca con portón negro</i>');
     }
+    if (data === 'reg:equipo') {
+        const avisado = deps.preguntarEquipo ? await deps.preguntarEquipo(chat, {
+            nombre: r.nombre || '', telefono: r.telefono, motivo: 'registro-zona', unaVezCadaMin: 60,
+            pregunta: `Se está registrando y no encuentra su zona. Escribió: «${r.ultimaBusqueda || '(sin dato)'}». ¿Le podemos entregar?`,
+        }).catch(() => false) : false;
+        return responder(chat.chatId, avisado
+            ? 'Listo, ya le pregunté al equipo 🙌 Te escriben aquí mismo. Mientras, puedes probar con tu código postal.'
+            : 'No pude avisar al equipo ahorita 😓 Prueba con tu código postal o inténtalo en un momento.');
+    }
     if (data === 'reg:ok') {
         if (r.paso !== 'confirmar') return null;
         return crearFicha(chat, deps);
     }
 }
 
-async function crearFicha(chat, { responder, vincularChat, bienvenida }) {
+async function crearFicha(chat, deps) {
+    const { responder, vincularChat, bienvenida } = deps;
     const r = chat.registro;
     const direccion = [r.calle, r.colonia, r.cp && `CP ${r.cp}`, r.municipio !== r.colonia && r.municipio]
         .filter(Boolean).join(', ');
@@ -266,8 +279,13 @@ async function crearFicha(chat, { responder, vincularChat, bienvenida }) {
         if (err.code === 11000) cliente = await Clientes.findOne({ telefono: r.telefono });
         if (!cliente) {
             console.error('❌ Alta desde Telegram:', err.message);
-            return responder(chat.chatId,
-                'Uy, no pude terminar tu registro 😓 Inténtalo en un momento o escríbenos: https://wa.me/527712346620');
+            const avisado = deps.preguntarEquipo ? await deps.preguntarEquipo(chat, {
+                nombre: r.nombre || '', telefono: r.telefono, motivo: 'registro-error', unaVezCadaMin: 60,
+                pregunta: `No se pudo terminar su registro desde Telegram (${String(err.message).slice(0, 120)}). Colonia: ${r.colonia || '-'}; dirección: ${r.calle || '-'}. Denlo de alta a mano.`,
+            }).catch(() => false) : false;
+            return responder(chat.chatId, avisado
+                ? 'Uy, no pude terminar tu registro 😓 Ya le avisé al equipo para que lo terminen y te escriben aquí mismo.'
+                : 'Uy, no pude terminar tu registro 😓 Inténtalo en un momento.');
         }
     }
 

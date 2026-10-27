@@ -365,7 +365,10 @@ async function manejarContacto(chat, from, contact) {
     return responder(chat.chatId, TEXTOS.bienvenida(cliente.nombre), tg.tecladoMenu());
 }
 
-const depsRegistro = () => ({ responder, vincularChat, bienvenida: TEXTOS.bienvenida });
+const depsRegistro = () => ({
+    responder, vincularChat, bienvenida: TEXTOS.bienvenida,
+    preguntarEquipo: (chat, datos) => equipo.preguntarAlEquipo({ clienteChatId: chat.chatId, ...datos }),
+});
 
 /**
  * Vía 3: `/vincular` con código de 6 dígitos.
