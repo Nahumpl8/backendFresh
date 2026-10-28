@@ -68,6 +68,8 @@ const REPARTIDOR = [
     P('POST', `/api/rutas/${ID}/cerrar`, 'repartidor'),
     P('GET', '/api/clientes/lite', 'repartidor'),
     P('GET', `/api/clientes/find/${ID}`, 'repartidor'),
+    P('GET', '/api/reactivacion/mi-ruta', 'repartidor: ruta de recuperación'),
+    P('POST', `/api/reactivacion/mi-ruta/${ID}/marcar`, 'repartidor: ruta de recuperación'),
 ];
 
 const coincide = (lista, metodo, ruta) =>
