@@ -22,6 +22,7 @@ const Repartidor = require('../models/Repartidor');
 const Config = require('../models/Config');
 const { requireAdmin } = require('../utils/adminMiddleware');
 const { normalizarTelefono } = require('../utils/metricas');
+const geo = require('../utils/ubicaciones');
 
 const PUEBLOS = /tizayuca|zapotlan|metztitl|acayuca|tolcayuca/;
 const NO_ES_RUTA = /^(pasa a local|recoge|recoger|local)\b/;
@@ -32,6 +33,10 @@ const MAX_INTENTOS = 2;     // visitas sin pedir antes de sacarlo de las rutas
 const DIAS_RETORNO = 28;    // "volvió" = compró dentro de 4 semanas después de la primera visita
 const CLAVE_REGALO = 'recuperacionRegalo';
 const CLAVE_WHATSAPP = 'recuperacionWhatsapp';
+const CLAVE_SALIDA = 'recuperacionSalida';     // "lat,lng" de donde salen los repartidores
+const CLAVE_LLEGADA = 'recuperacionLlegada';   // "lat,lng" a donde llegan al terminar
+const SALIDA_DEFAULT = '20.1240392,-98.7441015';    // Felipe Carrillo Puerto 603, Col. Morelos (aprox.)
+const LLEGADA_DEFAULT = '20.1176611,-98.7676920';
 const WHATSAPP_DEFAULT = '527712346620';   // el WhatsApp del negocio, donde toma pedidos Shade
 
 const hoyMX = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
@@ -135,9 +140,12 @@ async function candidatos() {
 }
 
 async function leerConfig() {
-    const filas = await Config.find({ key: { $in: [CLAVE_REGALO, CLAVE_WHATSAPP] } }).lean();
+    const filas = await Config.find({ key: { $in: [CLAVE_REGALO, CLAVE_WHATSAPP, CLAVE_SALIDA, CLAVE_LLEGADA] } }).lean();
     const v = (k) => ((filas.find((f) => f.key === k) || {}).value || '').trim();
-    return { regalo: v(CLAVE_REGALO), whatsapp: v(CLAVE_WHATSAPP) || WHATSAPP_DEFAULT };
+    return {
+        regalo: v(CLAVE_REGALO), whatsapp: v(CLAVE_WHATSAPP) || WHATSAPP_DEFAULT,
+        salida: v(CLAVE_SALIDA) || SALIDA_DEFAULT, llegada: v(CLAVE_LLEGADA) || LLEGADA_DEFAULT,
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -150,13 +158,20 @@ router.get('/config', soloAdmin, async (req, res) => {
 
 router.put('/config', soloAdmin, async (req, res) => {
     try {
-        const { regalo, whatsapp } = req.body || {};
+        const { regalo, whatsapp, salida, llegada } = req.body || {};
         const set = (key, value) => Config.updateOne({ key }, { $set: { value: String(value).slice(0, 300) || ' ', updatedAt: new Date() } }, { upsert: true });
         if (regalo !== undefined) await set(CLAVE_REGALO, regalo);
         if (whatsapp !== undefined) {
             const tel = String(whatsapp).replace(/\D/g, '');
             if (tel.length < 10) return res.status(400).json({ error: 'El WhatsApp debe tener al menos 10 dígitos' });
             await set(CLAVE_WHATSAPP, tel.length === 10 ? '52' + tel : tel);
+        }
+        // Salida y llegada: enlace de Google Maps del punto, o "lat,lng".
+        for (const [clave, valor, nombre] of [[CLAVE_SALIDA, salida, 'salida'], [CLAVE_LLEGADA, llegada, 'llegada']]) {
+            if (valor === undefined || !String(valor).trim()) continue;
+            const p = await geo.deEnlace(valor);
+            if (!p) return res.status(400).json({ error: `No pude leer la ubicación de la ${nombre}. Pega el enlace de Google Maps del punto (el pin en el mapa, no una dirección).` });
+            await set(clave, `${p.lat.toFixed(7)},${p.lng.toFixed(7)}`);
         }
         res.json(await leerConfig());
     } catch (err) {
@@ -293,6 +308,51 @@ router.delete('/marcas/:telefono', soloAdmin, async (req, res) => {
         console.log(`↩️ ${tel} vuelve a las rutas de recuperación (${r.deletedCount} visitas borradas por ${(req.admin && req.admin.usuario) || 'admin'})`);
         res.json({ ok: true, borradas: r.deletedCount });
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Acomodar la ruta: ubica cada casa y ordena las paradas de la salida a la llegada.
+router.post('/rutas/:id/acomodar', soloAdmin, async (req, res) => {
+    try {
+        const ruta = await RutaRecuperacion.findById(req.params.id);
+        if (!ruta) return res.status(404).json({ error: 'No encontrada' });
+        const cfg = await leerConfig();
+        const salida = geo.coordsDeTexto(cfg.salida);
+        const llegada = geo.coordsDeTexto(cfg.llegada);
+
+        // 1. Ubicación de cada casa: el enlace de Google Maps de su ficha (sin servicios externos).
+        const casas = ruta.casas.map((c) => c.toObject());
+        for (const c of casas) {
+            const ficha = await Clientes.findOne({ telefono: { $regex: c.telefono.split('').join('\\D*') + '\\D*$' } }, { gpsLink: 1, misDirecciones: 1 }).lean();
+            const enlaces = ficha ? [ficha.gpsLink, ...(ficha.misDirecciones || []).map((d) => d.gpsLink)].filter(Boolean) : [];
+            let p = null;
+            for (const e of enlaces) { p = await geo.deEnlace(e); if (p) break; }
+            Object.assign(c, p ? { lat: p.lat, lng: p.lng, ubicacion: 'exacta' } : { lat: null, lng: null, ubicacion: null });
+        }
+        // 2. Sin ubicación: al centro de las de su colonia, si hay.
+        for (const c of casas.filter((x) => x.lat == null)) {
+            const mismas = casas.filter((x) => x.lat != null && claveColonia(x.direccion) === claveColonia(c.direccion));
+            if (!mismas.length) continue;
+            c.lat = mismas.reduce((s, x) => s + x.lat, 0) / mismas.length;
+            c.lng = mismas.reduce((s, x) => s + x.lng, 0) / mismas.length;
+            c.ubicacion = 'colonia';
+        }
+        // 3. Orden por distancia; las que siguen sin ubicación van al final.
+        const conPunto = casas.filter((c) => c.lat != null);
+        const sinPunto = casas.filter((c) => c.lat == null);
+        const r = geo.ordenarParadas(conPunto, salida, llegada);
+        ruta.casas = [...r.orden.map((i) => conPunto[i]), ...sinPunto];
+        ruta.acomodo = { km: r.km, metodo: 'distancia', at: new Date() };
+        ruta.markModified('casas');
+        await ruta.save();
+
+        const cuenta = { exacta: 0, colonia: 0, sin: 0 };
+        for (const c of ruta.casas) cuenta[c.ubicacion || 'sin']++;
+        console.log(`📍 Ruta acomodada ${ruta._id}: ${JSON.stringify(cuenta)} · ~${r.km ?? '?'} km`);
+        res.json({ ruta, ...cuenta, km: r.km });
+    } catch (err) {
+        console.error('❌ acomodar ruta:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
