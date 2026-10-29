@@ -271,6 +271,7 @@ router.get('/fuera', soloAdmin, async (req, res) => {
             else a.intentos++;
             a.at = v.createdAt;
             if (v.nombre) a.nombre = v.nombre;
+            if (v.nota) a.nota = v.nota;   // la nota más reciente
             porTel.set(v.telefono, a);
         }
         const fuera = [...porTel.values()]
