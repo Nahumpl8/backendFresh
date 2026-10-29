@@ -350,7 +350,27 @@ router.get('/resumen', soloAdmin, async (req, res) => {
 // Repartidor
 // ---------------------------------------------------------------------------
 
-// Sus rutas de recuperación de hoy, con el regalo del volante y el WhatsApp de pedidos.
+// Días en que el repartidor tiene ruta de recuperación: últimos 30 días y los que vienen.
+router.get('/mi-ruta/fechas', repartidorOAdmin, async (req, res) => {
+    try {
+        const desde = new Date(Date.now() - 30 * 864e5).toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
+        const filtro = { fechaReparto: { $gte: desde } };
+        if (req.repartidor) filtro.repartidorId = req.repartidor.sub;
+        else if (req.query.repartidorId) filtro.repartidorId = req.query.repartidorId;
+        const rutas = await RutaRecuperacion.find(filtro, { fechaReparto: 1, casas: 1 }).lean();
+        const dias = {};
+        for (const r of rutas) {
+            const d = (dias[r.fechaReparto] = dias[r.fechaReparto] || { fecha: r.fechaReparto, casas: 0, marcadas: 0 });
+            d.casas += r.casas.length;
+            d.marcadas += r.casas.filter((c) => c.resultado).length;
+        }
+        res.json({ hoy: hoyMX(), fechas: Object.values(dias).sort((a, b) => a.fecha.localeCompare(b.fecha)) });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Sus rutas de recuperación de un día (hoy si no se dice), con el regalo del volante y el WhatsApp de pedidos.
 router.get('/mi-ruta', repartidorOAdmin, async (req, res) => {
     try {
         const filtro = { fechaReparto: String(req.query.fecha || hoyMX()) };
