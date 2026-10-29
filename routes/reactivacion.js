@@ -26,7 +26,8 @@ const { normalizarTelefono } = require('../utils/metricas');
 const PUEBLOS = /tizayuca|zapotlan|metztitl|acayuca|tolcayuca/;
 const NO_ES_RUTA = /^(pasa a local|recoge|recoger|local)\b/;
 const RESULTADOS = ['no_estaba', 'volante', 'quiere_pedir', 'no_interesa'];
-const FINALES = ['quiere_pedir', 'no_interesa'];
+const FINALES = ['quiere_pedir', 'no_interesa', 'no_molestar', 'recuperado'];
+const MARCAS_ADMIN = ['no_molestar', 'recuperado'];
 const MAX_INTENTOS = 2;     // visitas sin pedir antes de sacarlo de las rutas
 const DIAS_RETORNO = 28;    // "volvió" = compró dentro de 4 semanas después de la primera visita
 const CLAVE_REGALO = 'recuperacionRegalo';
@@ -35,9 +36,13 @@ const WHATSAPP_DEFAULT = '527712346620';   // el WhatsApp del negocio, donde tom
 
 const hoyMX = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
 const sinAcento = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-const claveColonia = (dir) => sinAcento(String(dir || '').split(',')[0])
-    .replace(/^(col\.?|colonia|fracc?\.?|fraccionamiento|ampl\.?|ampliacion|priv\.?)\s+/g, '')
-    .replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+// "Col. Ampl. Santa Julia" -> "santa julia": se quitan todos los prefijos, no solo el primero.
+const PREFIJO = /^(col|colonia|fracc?|fraccionamiento|ampl|ampliacion|priv|privada)\.?\s+/;
+function claveColonia(dir) {
+    let s = sinAcento(String(dir || '').split(',')[0]).replace(/\s+/g, ' ').trim();
+    for (let i = 0; i < 4 && PREFIJO.test(s); i++) s = s.replace(PREFIJO, '');
+    return s.replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
 const soloAdmin = requireAdmin;
 // El repartidor entra con su token (lo pone accesoApi); un admin también puede.
 const repartidorOAdmin = (req, res, next) => (req.repartidor || req.admin ? next() : res.status(401).json({ error: 'No autorizado' }));
@@ -167,18 +172,18 @@ router.get('/colonias', soloAdmin, async (req, res) => {
             const k = (col[c.colonia] = col[c.colonia] || { colonia: c.colonia, total: 0, fieles: 0, en_riesgo: 0, dormido: 0, perdido: 0 });
             k.total++; k[c.segmento]++; if (c.pedidos >= 3) k.fieles++;
         }
-        res.json(Object.values(col).filter((c) => c.total >= 5).sort((a, b) => b.fieles - a.fieles || b.total - a.total));
+        res.json(Object.values(col).sort((a, b) => b.fieles - a.fieles || b.total - a.total));
     } catch (err) {
         console.error('❌ reactivacion/colonias:', err.message);
         res.status(500).json({ error: 'No se pudieron calcular las colonias' });
     }
 });
 
-// Clientes por visitar de una colonia, con cuántas veces ya se les visitó.
+// Clientes por visitar de una o varias colonias (?colonias=a|b|c), con cuántas veces ya se les visitó.
 router.get('/candidatos', soloAdmin, async (req, res) => {
     try {
-        const colonia = String(req.query.colonia || '');
-        const lista = (await candidatos()).filter((c) => c.colonia === colonia);
+        const elegidas = new Set(String(req.query.colonias || req.query.colonia || '').split('|').map((x) => x.trim()).filter(Boolean));
+        const lista = (await candidatos()).filter((c) => elegidas.has(c.colonia));
         const visitas = await Visita.aggregate([
             { $match: { telefono: { $in: lista.map((c) => c.telefono) } } },
             { $group: { _id: '$telefono', n: { $sum: 1 } } },
@@ -221,14 +226,71 @@ router.post('/rutas', soloAdmin, async (req, res) => {
             });
         }
         if (!casas.length) return res.status(409).json({ error: 'Esas casas ya no están disponibles (ya se asignaron o ya no son clientes por recuperar).' });
+        // En el orden en que se recorren: por colonia y luego por calle.
+        const calle = (d) => sinAcento(String(d || '').split(',').slice(1).join(',')).trim();
+        casas.sort((a, b) => claveColonia(a.direccion).localeCompare(claveColonia(b.direccion)) || calle(a.direccion).localeCompare(calle(b.direccion)));
+        const nombresColonias = [...new Set(casas.map((c) => claveColonia(c.direccion)))].join(', ');
 
         const ruta = await RutaRecuperacion.create({
             fechaReparto, repartidorId: rep._id, repartidorNombre: rep.nombre,
-            colonia: String(colonia || claveColonia(casas[0].direccion)).slice(0, 120),
+            colonia: String(colonia || nombresColonias).slice(0, 300),
             casas, creadaPor: (req.admin && req.admin.usuario) || 'admin',
         });
         console.log(`🔄 Ruta de recuperación: ${ruta.colonia} · ${ruta.fechaReparto} · ${rep.nombre} · ${casas.length} casas`);
         res.status(201).json({ ruta, omitidas });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Marcar a un cliente desde el admin (sin visita): no molestar o ya recuperado. Sale de las rutas.
+router.post('/marcar', soloAdmin, async (req, res) => {
+    try {
+        const { telefono, estado, nombre, colonia, nota } = req.body || {};
+        const tel = normalizarTelefono(telefono);
+        if (!tel) return res.status(400).json({ error: 'Teléfono inválido' });
+        if (!MARCAS_ADMIN.includes(estado)) return res.status(400).json({ error: 'Marca inválida' });
+        const v = await Visita.create({
+            telefono: tel, nombre: String(nombre || '').slice(0, 120), colonia: String(colonia || '').slice(0, 120),
+            resultado: estado, nota: String(nota || '').slice(0, 500), por: (req.admin && req.admin.usuario) || 'admin',
+        });
+        res.status(201).json(v);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Clientes que ya no salen en las rutas por sus visitas o marcas, con el motivo.
+router.get('/fuera', soloAdmin, async (req, res) => {
+    try {
+        const visitas = await Visita.find().sort({ createdAt: 1 }).lean();
+        const porTel = new Map();
+        for (const v of visitas) {
+            const a = porTel.get(v.telefono) || { telefono: v.telefono, nombre: v.nombre, colonia: v.colonia, intentos: 0, final: null, at: v.createdAt };
+            if (FINALES.includes(v.resultado)) a.final = v.resultado;
+            else a.intentos++;
+            a.at = v.createdAt;
+            if (v.nombre) a.nombre = v.nombre;
+            porTel.set(v.telefono, a);
+        }
+        const fuera = [...porTel.values()]
+            .filter((a) => a.final || a.intentos >= MAX_INTENTOS)
+            .map((a) => ({ ...a, motivo: a.final || 'dos_visitas' }))
+            .sort((a, b) => new Date(b.at) - new Date(a.at));
+        res.json(fuera);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Volver a incluir a un cliente en las rutas: borra sus visitas y marcas.
+router.delete('/marcas/:telefono', soloAdmin, async (req, res) => {
+    try {
+        const tel = normalizarTelefono(req.params.telefono);
+        if (!tel) return res.status(400).json({ error: 'Teléfono inválido' });
+        const r = await Visita.deleteMany({ telefono: tel });
+        console.log(`↩️ ${tel} vuelve a las rutas de recuperación (${r.deletedCount} visitas borradas por ${(req.admin && req.admin.usuario) || 'admin'})`);
+        res.json({ ok: true, borradas: r.deletedCount });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

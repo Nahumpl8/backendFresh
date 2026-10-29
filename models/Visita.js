@@ -9,7 +9,8 @@ const VisitaSchema = new mongoose.Schema({
     telefono: { type: String, required: true, index: true },   // 10 dígitos
     nombre: String,
     colonia: { type: String, index: true },                     // clave normalizada de la colonia
-    resultado: { type: String, enum: ['no_estaba', 'volante', 'quiere_pedir', 'no_interesa'], required: true },
+    // no_molestar y recuperado los marca un admin desde la lista, sin visita.
+    resultado: { type: String, enum: ['no_estaba', 'volante', 'quiere_pedir', 'no_interesa', 'no_molestar', 'recuperado'], required: true },
     nota: { type: String, default: '' },
     rutaId: { type: mongoose.Schema.Types.ObjectId, ref: 'RutaRecuperacion' },
     por: String,                                                // repartidor (o admin) que la registró
