@@ -527,4 +527,15 @@ const sendEncuestaEmail = async ({ email, nombre, url, regalo }) => {
     }
 };
 
-module.exports = { sendWelcomeEmail, sendSmartEmail, sendPinRecoveryEmail, sendOrderConfirmationEmail, sendAdminResetEmail, sendEncuestaEmail };
+// --- CORREO CON HTML YA ARMADO (correo de la semana) ---
+const sendHtmlEmail = async ({ to, subject, html, text }) => {
+    try {
+        await transporter.sendMail({ from: '"Fresh Market" <pedidos@freshmarket.mx>', to, subject, html, text });
+        return true;
+    } catch (error) {
+        console.error(`Error enviando correo a ${to}:`, error.message);
+        return false;
+    }
+};
+
+module.exports = { sendWelcomeEmail, sendSmartEmail, sendPinRecoveryEmail, sendOrderConfirmationEmail, sendAdminResetEmail, sendEncuestaEmail, sendHtmlEmail };

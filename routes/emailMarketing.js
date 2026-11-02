@@ -109,4 +109,65 @@ async function sendBulkBackground(users, subject, body, opciones) {
     console.log(`✅ Campaña Smart terminada: ${successCount} enviados.`);
 }
 
+// ---------------------------------------------------------------------------
+// CORREO DE LA SEMANA: imagen de promociones + despensas del catálogo
+// ---------------------------------------------------------------------------
+const { requireAdmin } = require('../utils/adminMiddleware');
+const correoSemanal = require('../utils/correoSemanal');
+
+const datosSemanal = (b = {}) => ({
+    asunto: String(b.asunto || '').trim().slice(0, 150),
+    intro: String(b.intro || '').slice(0, 1500),
+    promoImg: /^https:\/\//.test(String(b.promoImg || '')) ? String(b.promoImg) : '',
+    conDespensas: b.conDespensas !== false,
+    excluirPueblos: b.excluirPueblos === true,
+    campana: String(b.campana || '').replace(/[^a-z0-9-]/gi, '').slice(0, 40) || 'semana',
+});
+
+router.post('/semanal/vista-previa', requireAdmin, async (req, res) => {
+    try { res.json(await correoSemanal.vistaPrevia(datosSemanal(req.body))); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/semanal/prueba', requireAdmin, async (req, res) => {
+    const d = datosSemanal(req.body);
+    const to = String(req.body?.email || '').trim();
+    if (!d.asunto) return res.status(400).json({ error: 'Escribe el asunto' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return res.status(400).json({ error: 'Correo de prueba inválido' });
+    const ok = await correoSemanal.enviar({ ...d, soloA: to });
+    res.status(ok ? 200 : 500).json(ok ? { ok: true } : { error: 'No se pudo mandar la prueba' });
+});
+
+router.post('/semanal/enviar', requireAdmin, async (req, res) => {
+    const d = datosSemanal(req.body);
+    if (!d.asunto) return res.status(400).json({ error: 'Escribe el asunto' });
+    if (!d.promoImg && !d.conDespensas) return res.status(400).json({ error: 'El correo va vacío: sube la imagen o incluye las despensas' });
+    try {
+        const r = await correoSemanal.enviar(d);
+        const { campana, ...plantilla } = d;
+        await guardarPlantilla(plantilla).catch(() => {});
+        console.log(`📰 Correo de la semana "${d.asunto}" a ${r.total}, por ${req.admin?.usuario || 'admin'}`);
+        res.json(r);
+    } catch (e) { res.status(409).json({ error: e.message }); }
+});
+
+// Plantilla: lo último que se guardó o mandó, para reusarlo la siguiente semana.
+const Config = require('../models/Config');
+const CLAVE_PLANTILLA = 'correoSemanalPlantilla';
+const guardarPlantilla = (d) => Config.updateOne({ key: CLAVE_PLANTILLA }, { $set: { value: JSON.stringify(d), updatedAt: new Date() } }, { upsert: true });
+
+router.get('/semanal/plantilla', requireAdmin, async (req, res) => {
+    const c = await Config.findOne({ key: CLAVE_PLANTILLA }).lean();
+    let plantilla = null;
+    try { plantilla = c ? JSON.parse(c.value) : null; } catch (_) { /* plantilla dañada: se ignora */ }
+    res.json(plantilla ? { ...plantilla, guardadaAt: c.updatedAt } : null);
+});
+
+router.put('/semanal/plantilla', requireAdmin, async (req, res) => {
+    const { campana, ...d } = datosSemanal(req.body);
+    await guardarPlantilla(d);
+    res.json({ ok: true });
+});
+
+router.get('/semanal/estado', requireAdmin, (req, res) => res.json(correoSemanal.estado() || null));
+
 module.exports = router;
