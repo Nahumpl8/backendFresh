@@ -23,6 +23,7 @@ const Ruta = require('../models/Ruta');
 const Config = require('../models/Config');
 const tg = require('./telegram');
 const { sendEncuestaEmail } = require('./emailService');
+const { correosDeBaja } = require('./bajasCorreo');
 
 const VERSION = 1;
 const DIAS_ENTRE_ENCUESTAS = 30;
@@ -171,7 +172,8 @@ let enCurso = null;   // { desde, hasta, total, enviadas, errores, at } del envÃ
  * Devuelve { candidatos: [...], conteo }. No escribe nada.
  */
 async function candidatos(desde, hasta) {
-    const conteo = { clientes: 0, sinCorreo: 0, excluidos: 0, recientes: 0, elegibles: 0 };
+    const conteo = { clientes: 0, sinCorreo: 0, excluidos: 0, recientes: 0, bajas: 0, elegibles: 0 };
+    const deBaja = await correosDeBaja();
     const elegidos = [];
     const vistos = new Set();
     const hace30 = new Date(Date.now() - DIAS_ENTRE_ENCUESTAS * 864e5);
@@ -199,6 +201,7 @@ async function candidatos(desde, hasta) {
             const texto = sinAcentos([cliente && cliente.nombre, cliente && cliente.direccion, ...peds.map((p) => `${p.direccion} ${p.cliente}`)].join(' '));
             if (EXCLUIDAS.test(texto)) { conteo.excluidos++; continue; }
             if (!cliente || !emailValido(cliente.email)) { conteo.sinCorreo++; continue; }
+            if (deBaja.has(String(cliente.email).trim().toLowerCase())) { conteo.bajas++; continue; }
             if (await Encuesta.exists({ telefono: t, createdAt: { $gte: hace30 } })) { conteo.recientes++; continue; }
             conteo.elegibles++;
             elegidos.push({ telefono: t, cliente, pedidos: peds, iso, repartidor: repartidorDe.get(t) || null });

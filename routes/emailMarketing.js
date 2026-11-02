@@ -1,8 +1,10 @@
-const router = require('express').Router();
+const express = require('express');
+const router = express.Router();
 const Clientes = require('../models/Clientes');
 const EmailCampaign = require('../models/EmailCampaign');
 // 👇 Solo necesitamos importar la SMART (la genérica ya no la usaremos aquí)
 const { sendSmartEmail } = require('../utils/emailService'); 
+const bajas = require('../utils/bajasCorreo');
 
 // 1. OBTENER HISTORIAL DE CAMPAÑAS
 router.get('/email/history', async (req, res) => {
@@ -65,6 +67,10 @@ router.post('/email/send-bulk', async (req, res) => {
             let query = { email: { $exists: true, $ne: null } };
             targets = await Clientes.find(query).select(fieldsToSelect);
         }
+
+        // Nunca a quien pidió su baja.
+        const deBaja = await bajas.correosDeBaja();
+        targets = targets.filter((t) => !deBaja.has(String(t.email || '').trim().toLowerCase()));
 
         if (targets.length === 0) return res.status(400).json({ message: "Sin destinatarios." });
 
@@ -165,6 +171,45 @@ router.get('/semanal/plantilla', requireAdmin, async (req, res) => {
 router.put('/semanal/plantilla', requireAdmin, async (req, res) => {
     const { campana, ...d } = datosSemanal(req.body);
     await guardarPlantilla(d);
+    res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// BAJAS: enlace del pie del correo (público, firmado) y lista en el panel
+// ---------------------------------------------------------------------------
+const paginaBaja = (titulo, cuerpo) => `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Fresh Market</title></head>
+<body style="margin:0; font-family:Arial,sans-serif; background:#f4f4f0; color:#1f2937;">
+<div style="max-width:440px; margin:60px auto; background:#fff; border-radius:16px; padding:28px 22px; text-align:center;">
+<div style="font-size:13px; letter-spacing:2px; font-weight:bold; color:#15803d;">FRESH MARKET</div>
+<h1 style="font-size:22px; margin:14px 0 10px;">${titulo}</h1>${cuerpo}</div></body></html>`;
+const escHtml = (s) => String(s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// Abrir el enlace solo pregunta (los antivirus abren los enlaces solos).
+router.get('/baja', (req, res) => {
+    const { e, f } = req.query;
+    if (!bajas.firmaValida(e, f)) return res.status(400).send(paginaBaja('Enlace no válido', '<p>Escríbenos por WhatsApp al 771 234 6620 y te damos de baja.</p>'));
+    res.send(paginaBaja('¿Ya no quieres recibir nuestros correos?',
+        `<p style="color:#4b5563;">Dejaremos de mandar promociones y encuestas a <b>${escHtml(e)}</b>.</p>
+        <form method="POST" action=""><button style="margin-top:12px; background:#15803d; color:#fff; border:none; padding:14px 26px; border-radius:999px; font-size:16px; font-weight:bold; cursor:pointer;">Sí, darme de baja</button></form>`));
+});
+
+// POST: el botón de la página y el "darse de baja" de Gmail/Outlook (un clic).
+router.post('/baja', express.urlencoded({ extended: false }), async (req, res) => {
+    const { e, f } = req.query;
+    if (!bajas.firmaValida(e, f)) return res.status(400).send(paginaBaja('Enlace no válido', '<p>Escríbenos por WhatsApp al 771 234 6620 y te damos de baja.</p>'));
+    await bajas.darDeBaja(e, 'enlace');
+    res.send(paginaBaja('Listo, ya no te mandaremos correos', '<p style="color:#4b5563;">Si cambias de opinión, escríbenos por WhatsApp al 771 234 6620. ¡Gracias por ser cliente de Fresh Market! 💚</p>'));
+});
+
+router.get('/semanal/bajas', requireAdmin, async (req, res) => res.json(await bajas.listar()));
+router.post('/semanal/bajas', requireAdmin, async (req, res) => {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Correo inválido' });
+    await bajas.darDeBaja(email, 'panel', req.admin?.nombre || req.admin?.usuario);
+    res.json({ ok: true });
+});
+router.delete('/semanal/bajas/:email', requireAdmin, async (req, res) => {
+    await bajas.reactivar(req.params.email);
     res.json({ ok: true });
 });
 

@@ -10,6 +10,7 @@ require('../models/Product');   // para el populate de los productos
 const Clientes = require('../models/Clientes');
 const EmailCampaign = require('../models/EmailCampaign');
 const { sendHtmlEmail } = require('./emailService');
+const bajas = require('./bajasCorreo');
 
 const TIENDA = 'https://www.freshmarket.mx/';
 const LOGO = 'https://www.freshmarket.mx/logo.png';
@@ -98,7 +99,7 @@ function armarHtml({ intro, promoImg, conDespensas, campana, despensas }) {
       <div style="font-family:Arial,sans-serif; font-size:14px; color:#4b5563; margin-top:14px;">o pide por WhatsApp: <a href="${WHATSAPP}" style="color:#15803d; font-weight:bold;">771 234 6620</a></div>
     </td></tr>
     <tr><td style="background:#1f2937; padding:14px; text-align:center; color:#9ca3af; font-family:Arial,sans-serif; font-size:11px;">
-      Fresh Market Pachuca · Si ya no quieres recibir estos correos, responde con la palabra BAJA.
+      Fresh Market Pachuca · ¿Ya no quieres recibir estos correos? <a href="{{baja}}" style="color:#9ca3af; text-decoration:underline;">Darme de baja</a>
     </td></tr>
   </table>
 </td></tr></table>
@@ -106,15 +107,17 @@ function armarHtml({ intro, promoImg, conDespensas, campana, despensas }) {
 }
 
 function texto({ intro, campana }) {
-    return `Hola {{nombre}},\n\n${intro || 'Ya están las despensas y promociones de esta semana.'}\n\nHaz tu pedido: ${enlace(campana)}\nO por WhatsApp: 771 234 6620\n\nFresh Market`;
+    return `Hola {{nombre}},\n\n${intro || 'Ya están las despensas y promociones de esta semana.'}\n\nHaz tu pedido: ${enlace(campana)}\nO por WhatsApp: 771 234 6620\n\nFresh Market\nPara ya no recibir estos correos: {{baja}}`;
 }
 
-const personalizar = (s, nombre) => s.replace(/{{nombre}}/g, esc(nombre) || '');
+const personalizar = (s, nombre, email) => s.replace(/{{nombre}}/g, esc(nombre) || '').replace(/{{baja}}/g, email ? bajas.urlBaja(email) : '#');
+/** Encabezados para el botón de baja de Gmail/Outlook (un clic, RFC 8058). */
+const encabezadosBaja = (email) => ({ 'List-Unsubscribe': `<${bajas.urlBaja(email)}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' });
 
 /** Clientes con correo válido (sin repetir correos). */
 async function destinatarios({ excluirPueblos }) {
     const cs = await Clientes.find({ email: { $nin: [null, ''] } }, { nombre: 1, email: 1, direccion: 1 }).lean();
-    const vistos = new Set();
+    const vistos = await bajas.correosDeBaja();   // los de baja cuentan como ya vistos: no se les manda
     const lista = [];
     for (const c of cs) {
         const email = String(c.email).trim().toLowerCase();
@@ -134,7 +137,7 @@ async function enviar({ asunto, intro, promoImg, conDespensas, excluirPueblos, c
     const txt = texto({ intro, campana });
 
     if (soloA) {   // prueba
-        return sendHtmlEmail({ to: soloA, subject: `[PRUEBA] ${asunto}`, html: personalizar(html, 'María'), text: personalizar(txt, 'María') });
+        return sendHtmlEmail({ to: soloA, subject: `[PRUEBA] ${asunto}`, html: personalizar(html, 'María', soloA), text: personalizar(txt, 'María', soloA) });
     }
     if (enCurso && !enCurso.terminado) throw new Error('Ya hay un correo enviándose');
     const lista = await destinatarios({ excluirPueblos });
@@ -142,7 +145,7 @@ async function enviar({ asunto, intro, promoImg, conDespensas, excluirPueblos, c
     enCurso = { total: lista.length, enviados: 0, errores: 0, terminado: false, asunto, at: new Date() };
     (async () => {
         for (const d of lista) {
-            const ok = await sendHtmlEmail({ to: d.email, subject: personalizar(asunto, d.nombre), html: personalizar(html, d.nombre), text: personalizar(txt, d.nombre) });
+            const ok = await sendHtmlEmail({ to: d.email, subject: personalizar(asunto, d.nombre), html: personalizar(html, d.nombre, d.email), text: personalizar(txt, d.nombre, d.email), headers: encabezadosBaja(d.email) });
             if (ok) enCurso.enviados++; else enCurso.errores++;
             await new Promise((r) => setTimeout(r, 400));
         }

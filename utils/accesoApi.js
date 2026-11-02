@@ -50,6 +50,7 @@ const PUBLICAS = [
 
     // --- Encuesta de satisfacción: el token del enlace identifica al cliente ---
     P('(GET|POST)', `/api/encuestas/r/${ID}`, 'tienda: encuesta'),
+    P('(GET|POST)', '/api/marketing/baja', 'correo: darse de baja (enlace firmado)'),
 
     // --- Wallet: enlaces de descarga y Apple PassKit (HMAC propio) ---
     P('GET', `/api/wallet/download/apple/${ID}`, 'clientes'),

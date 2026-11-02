@@ -528,9 +528,9 @@ const sendEncuestaEmail = async ({ email, nombre, url, regalo }) => {
 };
 
 // --- CORREO CON HTML YA ARMADO (correo de la semana) ---
-const sendHtmlEmail = async ({ to, subject, html, text }) => {
+const sendHtmlEmail = async ({ to, subject, html, text, headers }) => {
     try {
-        await transporter.sendMail({ from: '"Fresh Market" <pedidos@freshmarket.mx>', to, subject, html, text });
+        await transporter.sendMail({ from: '"Fresh Market" <pedidos@freshmarket.mx>', to, subject, html, text, headers });
         return true;
     } catch (error) {
         console.error(`Error enviando correo a ${to}:`, error.message);
