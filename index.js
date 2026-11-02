@@ -61,10 +61,15 @@ const reactivacionRoute = require('./routes/reactivacion');
 const aiRoute = require('./routes/ai');
 const coloniasEnvioRoute = require('./routes/coloniasEnvio');
 const metricasRoute = require('./routes/metricas');
+const encuestasRoute = require('./routes/encuestas');
 
 // --- CONEXIÓN A MONGODB ---
 mongoose.connect(process.env.MONGO_URL)
-    .then(() => { console.log('Connected to MongoDB') })
+    .then(() => {
+        console.log('Connected to MongoDB');
+        // Encuestas: cada día a partir de las 10:00 salen las de las entregas de ayer.
+        require('./utils/encuestas').programarEnvioDiario();
+    })
     .catch((err) => { console.log('Error: ', err) });
 
 // --- DEFINICIÓN DE ENDPOINTS ---
@@ -96,6 +101,7 @@ app.use('/api/reactivacion', reactivacionRoute);
 app.use('/api/ai', aiRoute);
 app.use('/api/colonias-envio', coloniasEnvioRoute);
 app.use('/api/metricas', metricasRoute);
+app.use('/api/encuestas', encuestasRoute);
 
 
 // --- SERVIDOR ---

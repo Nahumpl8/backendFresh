@@ -475,4 +475,56 @@ const sendAdminResetEmail = async (email, nombre, codigo) => {
     });
 };
 
-module.exports = { sendWelcomeEmail, sendSmartEmail, sendPinRecoveryEmail, sendOrderConfirmationEmail, sendAdminResetEmail };
+// --- ENCUESTA DE SATISFACCIÓN (un día después de la entrega) ---
+const sendEncuestaEmail = async ({ email, nombre, url, regalo }) => {
+    try {
+        const hola = nombre ? `Hola ${nombre},` : 'Hola,';
+        const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <body style="margin:0; padding:0; background-color:#f4f4f4; font-family: Arial, sans-serif;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f4; padding:20px 0;">
+                <tr><td align="center">
+                    <table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px; background:#ffffff; border-radius:12px; overflow:hidden;">
+                        <tr><td style="background-color:#15803d; padding:22px; text-align:center; color:#ffffff;">
+                            <div style="font-size:13px; letter-spacing:2px; font-weight:bold;">FRESH MARKET</div>
+                            <div style="font-size:24px; font-weight:bold; margin-top:6px;">¿Cómo llegó tu pedido?</div>
+                        </td></tr>
+                        <tr><td style="padding:24px; color:#333333; font-size:16px; line-height:1.5;">
+                            <p style="margin:0 0 12px 0;">${hola}</p>
+                            <p style="margin:0 0 12px 0;">Queremos saber cómo te fue con tu último pedido. Son unas preguntas rápidas, <b>menos de 1 minuto</b>.</p>
+                            <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:14px; margin:18px 0; text-align:center;">
+                                <div style="font-size:28px;">🎁</div>
+                                <div style="font-size:17px; color:#166534;">Contesta y gana <b>${regalo}</b></div>
+                                <div style="font-size:13px; color:#4b5563; margin-top:4px;">en tu próximo pedido. Se agrega solo, válido 7 días.</div>
+                            </div>
+                            <div style="text-align:center; margin:22px 0;">
+                                <a href="${url}" style="display:inline-block; background:#15803d; color:#ffffff; padding:14px 28px; border-radius:999px; text-decoration:none; font-weight:bold; font-size:17px;">Contestar encuesta</a>
+                            </div>
+                            <p style="margin:0; font-size:14px; color:#6b7280;">Gracias por elegir Fresh Market 💚</p>
+                        </td></tr>
+                        <tr><td style="background-color:#1f2937; padding:14px; text-align:center; color:#9ca3af; font-size:11px;">
+                            Fresh Market Pachuca · Si no quieres recibir estas encuestas, responde a este correo.
+                        </td></tr>
+                    </table>
+                </td></tr>
+            </table>
+        </body>
+        </html>`;
+        const textContent = `${hola}\n\nQueremos saber cómo te fue con tu último pedido (menos de 1 minuto).\nContesta y gana ${regalo} en tu próximo pedido (se agrega solo, válido 7 días):\n${url}\n\nGracias por elegir Fresh Market`;
+
+        await transporter.sendMail({
+            from: '"Fresh Market" <pedidos@freshmarket.mx>',
+            to: email,
+            subject: `¿Cómo llegó tu pedido${nombre ? `, ${nombre}` : ''}? 🎁 Contesta y gana ${regalo}`,
+            text: textContent,
+            html: htmlContent
+        });
+        return true;
+    } catch (error) {
+        console.error('Error enviando encuesta:', error.message);
+        return false;
+    }
+};
+
+module.exports = { sendWelcomeEmail, sendSmartEmail, sendPinRecoveryEmail, sendOrderConfirmationEmail, sendAdminResetEmail, sendEncuestaEmail };

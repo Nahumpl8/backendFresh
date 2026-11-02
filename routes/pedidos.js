@@ -11,6 +11,7 @@ const notifyPassUpdate = require('../utils/pushApple');
 const { notifyGoogleWalletUpdate } = require('../utils/pushGoogle');
 const { sendOrderConfirmationEmail } = require('../utils/emailService');
 const { reclamarPromociones } = require('../utils/promociones');
+const { reclamarRegalo: reclamarRegaloEncuesta, confirmarRegalo: confirmarRegaloEncuesta, devolverRegalo: devolverRegaloEncuesta } = require('../utils/encuestas');
 const { envioPorColonia } = require('./coloniasEnvio');
 const { inferEnvioPrincipal } = require('../utils/envioZonas');
 
@@ -495,6 +496,22 @@ router.post('/new', async (req, res) => {
             }
         }
 
+        // --- REGALO DE ENCUESTA ---
+        // Si contestó la encuesta y tiene regalo esperando, va en este pedido
+        // (el primero que entre, por cualquier canal). Se anota junto al de promo.
+        let regaloEncuesta = null;
+        if (!/^reposicion$/i.test(String(req.body.despensa || '').trim())) {
+            try {
+                regaloEncuesta = await reclamarRegaloEncuesta(telefono);
+            } catch (e) {
+                console.error('⚠️ Error revisando regalo de encuesta:', e.message);
+            }
+        }
+        if (regaloEncuesta) {
+            const texto = `${regaloEncuesta.regalo.texto} (encuesta)`;
+            regaloPromo = regaloPromo ? `${regaloPromo}, ${texto}` : texto;
+        }
+
         const totalBase = Number(req.body.total) || 0;
         const totalFinal = Math.max(0, totalBase - descuentoPromo);
 
@@ -513,8 +530,18 @@ router.post('/new', async (req, res) => {
             esClienteNuevo
         });
 
-        const savedPedido = await newPedido.save();
+        let savedPedido;
+        try {
+            savedPedido = await newPedido.save();
+        } catch (e) {
+            if (regaloEncuesta) await devolverRegaloEncuesta(regaloEncuesta._id).catch(() => {});
+            throw e;
+        }
         console.log("✅ Pedido guardado ID:", savedPedido._id);
+        if (regaloEncuesta) {
+            await confirmarRegaloEncuesta(regaloEncuesta._id, savedPedido._id).catch(() => {});
+            console.log(`🎁 Regalo de encuesta en el pedido ${savedPedido._id}: ${regaloEncuesta.regalo.texto}`);
+        }
 
         let responsePayload = {
             pedido: savedPedido,
