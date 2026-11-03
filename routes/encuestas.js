@@ -70,14 +70,17 @@ router.post('/admin/enviar', soloAdmin, async (req, res) => {
     const { desde, hasta } = req.body || {};
     if (!isoValido(desde) || !isoValido(hasta) || desde > hasta) return res.status(400).json({ error: 'Fechas inválidas' });
     if (desde < enc.sumarDias(enc.hoyMX(), -14)) return res.status(400).json({ error: 'Solo entregas de las últimas 2 semanas' });
-    const actual = enc.estadoEnvio();
-    if (actual && !actual.terminado) return res.status(409).json({ error: 'Ya hay un envío en marcha', estado: actual });
-    enc.enviarRango(desde, hasta, 'campana').catch((err) => console.error('❌ Envío de encuestas:', err.message));
+    enc.enviarRango(desde, hasta, 'campana', req.admin?.usuario).catch((err) => console.error('❌ Envío de encuestas:', err.message));
     console.log(`📋 Envío de encuestas ${desde}..${hasta} pedido por ${req.admin?.usuario || 'admin'}`);
     res.json({ ok: true });
 });
 
-router.get('/admin/estado-envio', soloAdmin, (req, res) => res.json(enc.estadoEnvio() || null));
+router.get('/admin/estado-envio', soloAdmin, async (req, res) => res.json((await enc.estadoEnvio()) || null));
+
+/** Vuelve a mandar las encuestas cuyo correo no salió. */
+router.post('/admin/reintentar', soloAdmin, async (req, res) => {
+    try { res.json(await enc.reintentarFallidas(req.admin?.usuario)); } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 router.get('/admin/resumen', soloAdmin, async (req, res) => {
     try {

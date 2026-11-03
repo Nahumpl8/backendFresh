@@ -476,8 +476,8 @@ const sendAdminResetEmail = async (email, nombre, codigo) => {
 };
 
 // --- ENCUESTA DE SATISFACCIÓN (un día después de la entrega) ---
-const sendEncuestaEmail = async ({ email, nombre, url, regalo }) => {
-    try {
+/** Asunto, HTML y texto de la encuesta (lo usa la cola de correos masivos). */
+const armarEncuestaEmail = ({ nombre, url, regalo, bajaUrl = '#' }) => {
         const hola = nombre ? `Hola ${nombre},` : 'Hola,';
         const htmlContent = `
         <!DOCTYPE html>
@@ -504,7 +504,7 @@ const sendEncuestaEmail = async ({ email, nombre, url, regalo }) => {
                             <p style="margin:0; font-size:14px; color:#6b7280;">Gracias por elegir Fresh Market 💚</p>
                         </td></tr>
                         <tr><td style="background-color:#1f2937; padding:14px; text-align:center; color:#9ca3af; font-size:11px;">
-                            Fresh Market Pachuca · Si no quieres recibir estas encuestas, responde a este correo.
+                            Fresh Market Pachuca · ¿No quieres recibir estos correos? <a href="${bajaUrl}" style="color:#9ca3af;">Darme de baja</a>
                         </td></tr>
                     </table>
                 </td></tr>
@@ -512,19 +512,11 @@ const sendEncuestaEmail = async ({ email, nombre, url, regalo }) => {
         </body>
         </html>`;
         const textContent = `${hola}\n\nQueremos saber cómo te fue con tu último pedido (menos de 1 minuto).\nContesta y gana ${regalo} en tu próximo pedido (se agrega solo, válido 7 días):\n${url}\n\nGracias por elegir Fresh Market`;
-
-        await transporter.sendMail({
-            from: '"Fresh Market" <pedidos@freshmarket.mx>',
-            to: email,
+        return {
             subject: `¿Cómo llegó tu pedido${nombre ? `, ${nombre}` : ''}? 🎁 Contesta y gana ${regalo}`,
             text: textContent,
-            html: htmlContent
-        });
-        return true;
-    } catch (error) {
-        console.error('Error enviando encuesta:', error.message);
-        return false;
-    }
+            html: htmlContent,
+        };
 };
 
 // --- CORREO CON HTML YA ARMADO (correo de la semana) ---
@@ -538,4 +530,4 @@ const sendHtmlEmail = async ({ to, subject, html, text, headers }) => {
     }
 };
 
-module.exports = { sendWelcomeEmail, sendSmartEmail, sendPinRecoveryEmail, sendOrderConfirmationEmail, sendAdminResetEmail, sendEncuestaEmail, sendHtmlEmail };
+module.exports = { sendWelcomeEmail, sendSmartEmail, sendPinRecoveryEmail, sendOrderConfirmationEmail, sendAdminResetEmail, armarEncuestaEmail, sendHtmlEmail };

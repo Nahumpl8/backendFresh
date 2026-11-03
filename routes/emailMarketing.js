@@ -148,7 +148,7 @@ router.post('/semanal/enviar', requireAdmin, async (req, res) => {
     if (!d.asunto) return res.status(400).json({ error: 'Escribe el asunto' });
     if (!d.promoImg && !d.conDespensas) return res.status(400).json({ error: 'El correo va vacío: sube la imagen o incluye las despensas' });
     try {
-        const r = await correoSemanal.enviar(d);
+        const r = await correoSemanal.enviar({ ...d, creadoPor: req.admin?.usuario });
         const { campana, ...plantilla } = d;
         await guardarPlantilla(plantilla).catch(() => {});
         console.log(`📰 Correo de la semana "${d.asunto}" a ${r.total}, por ${req.admin?.usuario || 'admin'}`);
@@ -213,6 +213,6 @@ router.delete('/semanal/bajas/:email', requireAdmin, async (req, res) => {
     res.json({ ok: true });
 });
 
-router.get('/semanal/estado', requireAdmin, (req, res) => res.json(correoSemanal.estado() || null));
+router.get('/semanal/estado', requireAdmin, async (req, res) => res.json((await correoSemanal.estado()) || null));
 
 module.exports = router;

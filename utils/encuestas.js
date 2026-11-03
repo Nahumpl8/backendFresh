@@ -22,8 +22,9 @@ const Product = require('../models/Product');
 const Ruta = require('../models/Ruta');
 const Config = require('../models/Config');
 const tg = require('./telegram');
-const { sendEncuestaEmail } = require('./emailService');
-const { correosDeBaja } = require('./bajasCorreo');
+const { armarEncuestaEmail } = require('./emailService');
+const cola = require('./colaCorreo');
+const { correosDeBaja, urlBaja } = require('./bajasCorreo');
 
 const VERSION = 1;
 const DIAS_ENTRE_ENCUESTAS = 30;
@@ -107,7 +108,6 @@ const primerNombre = (n) => {
     const p = String(n || '').split('-')[0].trim().split(/\s+/)[0] || '';
     return p ? p.charAt(0).toUpperCase() + p.slice(1).toLowerCase() : '';
 };
-const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Respaldo por nombre, para productos sin categoría (agregados a mano o promos).
 const POR_NOMBRE = [
@@ -165,7 +165,6 @@ async function productosDe(pedidos, cacheDespensas) {
 // ---------------------------------------------------------------------------
 // Armar y mandar
 // ---------------------------------------------------------------------------
-let enCurso = null;   // { desde, hasta, total, enviadas, errores, at } del envío en marcha
 
 /**
  * Quiénes recibirían encuesta por las entregas de los días [desde, hasta].
@@ -210,9 +209,9 @@ async function candidatos(desde, hasta) {
     return { candidatos: elegidos, conteo };
 }
 
-async function crearYEnviar(c, origen, regalo, cacheDespensas) {
+async function crearEncuesta(c, origen, cacheDespensas) {
     const productos = await productosDe(c.pedidos, cacheDespensas);
-    const encuesta = await Encuesta.create({
+    return Encuesta.create({
         token: crypto.randomBytes(16).toString('base64url'),
         telefono: c.telefono,
         nombre: c.cliente.nombre,
@@ -226,38 +225,62 @@ async function crearYEnviar(c, origen, regalo, cacheDespensas) {
         version: VERSION,
         origen,
     });
-    const ok = await sendEncuestaEmail({
-        email: encuesta.email,
-        nombre: primerNombre(encuesta.nombre),
-        url: URL_ENCUESTA + encuesta.token,
-        regalo,
-    });
-    await Encuesta.updateOne({ _id: encuesta._id }, { $set: { envio: { at: new Date(), ok, error: ok ? '' : 'No se pudo mandar el correo' } } });
-    return ok;
 }
 
-/** Manda las encuestas de las entregas de [desde, hasta]. Corre en segundo plano. */
-async function enviarRango(desde, hasta, origen = 'auto') {
-    if (enCurso && !enCurso.terminado) throw new Error('Ya hay un envío en marcha');
+/** Encola el correo de estas encuestas (lo manda la cola, a su ritmo). */
+function encolarEncuestas(encuestas, descripcion, creadoPor) {
+    return cola.encolar({
+        tipo: 'encuesta',
+        asunto: 'Encuesta de satisfacción',
+        descripcion,
+        creadoPor,
+        destinatarios: encuestas.map((e) => ({ to: e.email, nombre: primerNombre(e.nombre), encuestaId: e._id })),
+    });
+}
+
+// Cómo se arma el correo de una encuesta al momento de mandarlo.
+cola.registrar('encuesta', async (envio) => {
+    const e = await Encuesta.findById(envio.encuestaId).lean();
+    if (!e || e.respondidaAt) return null;
+    const msg = armarEncuestaEmail({ nombre: primerNombre(e.nombre), url: URL_ENCUESTA + e.token, regalo: await regaloActual(), bajaUrl: urlBaja(envio.to) });
+    return {
+        ...msg,
+        headers: { 'List-Unsubscribe': `<${urlBaja(envio.to)}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
+        alEnviar: () => Encuesta.updateOne({ _id: e._id }, { $set: { envio: { at: new Date(), ok: true, error: '' } } }),
+    };
+});
+
+/** Crea las encuestas de las entregas de [desde, hasta] y las encola. */
+async function enviarRango(desde, hasta, origen = 'auto', creadoPor) {
     const { candidatos: lista, conteo } = await candidatos(desde, hasta);
-    enCurso = { desde, hasta, origen, total: lista.length, enviadas: 0, errores: 0, conteo, at: new Date(), terminado: false };
-    const regalo = await regaloActual();
     const cache = new Map();
+    const creadas = [];
     for (const c of lista) {
         try {
-            const ok = await crearYEnviar(c, origen, regalo, cache);
-            if (ok) enCurso.enviadas++; else enCurso.errores++;
+            creadas.push(await crearEncuesta(c, origen, cache));
         } catch (e) {
-            // E11000: ya había encuesta de esa entrega (dos envíos cruzados). No es error del cliente.
-            if (e.code !== 11000) { enCurso.errores++; console.error('❌ Encuesta:', e.message); }
+            // E11000: ya había encuesta de esa entrega (dos envíos cruzados).
+            if (e.code !== 11000) console.error('❌ Encuesta:', e.message);
         }
-        await esperar(1500);   // el SMTP de GoDaddy limita la velocidad
     }
-    enCurso.terminado = true;
-    console.log(`📋 Encuestas ${desde}..${hasta} (${origen}): ${enCurso.enviadas} enviadas, ${enCurso.errores} errores`, conteo);
-    return enCurso;
+    if (creadas.length) await encolarEncuestas(creadas, `Entregas del ${desde} al ${hasta}`, creadoPor || origen);
+    console.log(`📋 Encuestas ${desde}..${hasta} (${origen}): ${creadas.length} en cola`, conteo);
+    return { total: creadas.length, conteo };
 }
-const estadoEnvio = () => enCurso;
+
+/** Vuelve a encolar las encuestas cuyo correo no salió (sin contestar, últimos 7 días). */
+async function reintentarFallidas(creadoPor) {
+    const fallidas = await Encuesta.find({
+        respondidaAt: null, 'envio.ok': { $ne: true }, createdAt: { $gte: new Date(Date.now() - 7 * 864e5) },
+    }).lean();
+    if (fallidas.length) await encolarEncuestas(fallidas, 'Reintento de encuestas que no salieron', creadoPor);
+    return { total: fallidas.length };
+}
+
+async function estadoEnvio() {
+    const a = await cola.avance('encuesta');
+    return a && { ...a, enviadas: a.enviados };
+}
 
 /** Cada día, a partir de las 10:00, manda las de las entregas de ayer. */
 function programarEnvioDiario() {
@@ -577,7 +600,7 @@ async function resumen(desde) {
 module.exports = {
     PREGUNTAS, CATEGORIAS, NOMBRE_OPCION, VERSION, REGALO_DEFAULT, DIAS_REGALO,
     fechaAISO, hoyMX, sumarDias,
-    candidatos, productosDe, enviarRango, estadoEnvio, programarEnvioDiario,
+    candidatos, productosDe, enviarRango, reintentarFallidas, estadoEnvio, programarEnvioDiario,
     paraContestar, contestar, preguntasPara,
     reclamarRegalo, confirmarRegalo, devolverRegalo, regaloPendiente, avisarRegaloAplicado, pedidoPorEntregar,
     resumen, regaloActual, leerConfig,

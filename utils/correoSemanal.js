@@ -9,8 +9,8 @@ const Despensas = require('../models/Despensas');
 require('../models/Product');   // para el populate de los productos
 const Clientes = require('../models/Clientes');
 const EmailCampaign = require('../models/EmailCampaign');
-const { sendHtmlEmail } = require('./emailService');
 const bajas = require('./bajasCorreo');
+const cola = require('./colaCorreo');
 
 const TIENDA = 'https://www.freshmarket.mx/';
 const LOGO = 'https://www.freshmarket.mx/logo.png';
@@ -129,31 +129,31 @@ async function destinatarios({ excluirPueblos }) {
     return lista;
 }
 
-let enCurso = null;
+// Cómo se arma el correo de la semana para cada destinatario al mandarlo.
+cola.registrar('semanal', async (envio, lote) => ({
+    subject: personalizar(lote.asunto, envio.nombre),
+    html: personalizar(lote.html, envio.nombre, envio.to),
+    text: personalizar(lote.text, envio.nombre, envio.to),
+    headers: encabezadosBaja(envio.to),
+}));
 
-async function enviar({ asunto, intro, promoImg, conDespensas, excluirPueblos, campana, soloA }) {
+async function enviar({ asunto, intro, promoImg, conDespensas, excluirPueblos, campana, soloA, creadoPor }) {
     const despensas = conDespensas ? await despensasDelCatalogo() : [];
     const html = armarHtml({ intro, promoImg, conDespensas, campana, despensas });
     const txt = texto({ intro, campana });
 
-    if (soloA) {   // prueba
-        return sendHtmlEmail({ to: soloA, subject: `[PRUEBA] ${asunto}`, html: personalizar(html, 'María', soloA), text: personalizar(txt, 'María', soloA) });
+    if (soloA) {   // prueba: sale por el mismo proveedor que el envío masivo
+        return cola.enviarDirecto({ to: soloA, subject: `[PRUEBA] ${asunto}`, html: personalizar(html, 'María', soloA), text: personalizar(txt, 'María', soloA) });
     }
-    if (enCurso && !enCurso.terminado) throw new Error('Ya hay un correo enviándose');
+    if (await cola.hayPendientes('semanal')) throw new Error('Todavía se está mandando el correo anterior');
     const lista = await destinatarios({ excluirPueblos });
-    const campaña = await EmailCampaign.create({ subject: asunto, body: intro || '(correo de la semana)', target: 'semanal', recipientCount: lista.length, status: 'sending' });
-    enCurso = { total: lista.length, enviados: 0, errores: 0, terminado: false, asunto, at: new Date() };
-    (async () => {
-        for (const d of lista) {
-            const ok = await sendHtmlEmail({ to: d.email, subject: personalizar(asunto, d.nombre), html: personalizar(html, d.nombre, d.email), text: personalizar(txt, d.nombre, d.email), headers: encabezadosBaja(d.email) });
-            if (ok) enCurso.enviados++; else enCurso.errores++;
-            await new Promise((r) => setTimeout(r, 400));
-        }
-        enCurso.terminado = true;
-        await EmailCampaign.updateOne({ _id: campaña._id }, { $set: { status: 'sent', recipientCount: enCurso.enviados } }).catch(() => {});
-        console.log(`📰 Correo de la semana "${asunto}": ${enCurso.enviados} enviados, ${enCurso.errores} errores`);
-    })().catch((e) => { enCurso.terminado = true; console.error('❌ Correo de la semana:', e.message); });
-    return { total: lista.length };
+    const lote = await cola.encolar({
+        tipo: 'semanal', asunto, html, text: txt, creadoPor,
+        descripcion: `Correo de la semana (${campana})`,
+        destinatarios: lista.map((d) => ({ to: d.email, nombre: d.nombre })),
+    });
+    await EmailCampaign.create({ subject: asunto, body: intro || '(correo de la semana)', target: 'semanal', recipientCount: lote.total, status: 'cola' }).catch(() => {});
+    return { total: lote.total };
 }
 
 async function vistaPrevia({ intro, promoImg, conDespensas, excluirPueblos, campana }) {
@@ -163,4 +163,4 @@ async function vistaPrevia({ intro, promoImg, conDespensas, excluirPueblos, camp
     return { html, destinatarios: lista.length, despensas: despensas.map((d) => `${d.nombre} ${dinero(d.precio)}`) };
 }
 
-module.exports = { enviar, vistaPrevia, estado: () => enCurso };
+module.exports = { enviar, vistaPrevia, estado: () => cola.avance('semanal') };

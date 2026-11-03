@@ -69,6 +69,8 @@ mongoose.connect(process.env.MONGO_URL)
         console.log('Connected to MongoDB');
         // Encuestas: cada día a partir de las 10:00 salen las de las entregas de ayer.
         require('./utils/encuestas').programarEnvioDiario();
+        // Correos masivos: cola que sobrevive reinicios y respeta el límite del proveedor.
+        require('./utils/colaCorreo').iniciar().catch((e) => console.error('❌ Cola de correos:', e.message));
     })
     .catch((err) => { console.log('Error: ', err) });
 
