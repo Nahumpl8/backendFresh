@@ -7,6 +7,7 @@ const { sendWelcomeEmail } = require('../utils/emailService');
 const { inferEnvioDireccion } = require('../utils/envioZonas');
 const { envioPorColonia } = require('./coloniasEnvio');
 const { requireAdmin } = require('../utils/adminMiddleware');
+const ContactoPeligro = require('../models/ContactoPeligro');
 const notifyPassUpdate = require('../utils/pushApple');
 const { notifyGoogleWalletUpdate } = require('../utils/pushGoogle');
 
@@ -869,6 +870,9 @@ router.get('/en-peligro', async (req, res) => {
 
         // Mapa de clientes por teléfono canónico (para email/wallet/_id/nombre real).
         const clientes = await Clientes.find({}, 'nombre telefono email hasWallet puntos direccion colonia cp');
+        // Seguimiento (contactado / no contestó / recuperado + nota)
+        const contactos = {};
+        (await ContactoPeligro.find({}, 'telefono estado nota por updatedAt').lean()).forEach((c) => { contactos[c.telefono] = c; });
         const mapCli = {};
         clientes.forEach(c => { const k = telCanonico(c.telefono); if (k.length === 10) mapCli[k] = c; });
 
@@ -899,6 +903,9 @@ router.get('/en-peligro', async (req, res) => {
                     diasSinPedir: dias,
                     cadenciaDias: cadencia ? Math.round(cadencia) : null,
                     segmento: segmentarChurn(dias, ratio),
+                    contacto: contactos[tel]
+                        ? { estado: contactos[tel].estado, nota: contactos[tel].nota, por: contactos[tel].por, at: contactos[tel].updatedAt }
+                        : null,
                 };
             })
             .filter(f => f.segmento !== 'activo');
@@ -923,6 +930,27 @@ router.get('/en-peligro', async (req, res) => {
     } catch (err) {
         console.error('Error en /clientes/en-peligro:', err);
         res.status(500).json({ error: 'Error del servidor' });
+    }
+});
+
+// Seguimiento de un cliente en peligro: { telefono, estado, nota }
+router.put('/en-peligro/contacto', requireAdmin, async (req, res) => {
+    try {
+        const tel = String(req.body?.telefono || '').replace(/\D/g, '').slice(-10);
+        const { estado } = req.body || {};
+        const nota = String(req.body?.nota || '').trim().slice(0, 1000);
+        if (tel.length !== 10) return res.status(400).json({ error: 'Teléfono inválido' });
+        if (!ContactoPeligro.ESTADOS.includes(estado)) return res.status(400).json({ error: 'Estado inválido' });
+        const por = req.admin?.nombre || req.admin?.usuario || 'admin';
+        const c = await ContactoPeligro.findOneAndUpdate(
+            { telefono: tel },
+            { $set: { estado, nota, por }, $push: { historial: { $each: [{ estado, nota, por, at: new Date() }], $slice: -20 } } },
+            { upsert: true, new: true },
+        ).lean();
+        res.json({ estado: c.estado, nota: c.nota, por: c.por, at: c.updatedAt });
+    } catch (err) {
+        console.error('Error guardando contacto en peligro:', err.message);
+        res.status(500).json({ error: 'No se pudo guardar' });
     }
 });
 
