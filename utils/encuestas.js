@@ -409,9 +409,13 @@ async function contestar(token, body) {
         await Clientes.updateOne({ telefono: { $regex: `${e.telefono}$` }, $or: [{ email: null }, { email: '' }] }, { $set: { email: nuevo } }).catch(() => {});
     }
 
+    // Si ya tiene un pedido de esta semana que no se ha entregado, el regalo va en ese.
+    const yaPedido = await aplicarAPedidoExistente(e._id, e.telefono)
+        .catch((err) => { console.error('❌ Regalo a pedido existente:', err.message); return null; });
+
     const fresca = await Encuesta.findById(e._id).lean();
-    avisarEquipo(fresca).catch((err) => console.error('❌ Aviso de encuesta a Telegram:', err.message));
-    return { regalo, venceAt: fresca.regalo.venceAt, diasRegalo: DIAS_REGALO };
+    avisarEquipo(fresca, { pedidoExistente: yaPedido }).catch((err) => console.error('❌ Aviso de encuesta a Telegram:', err.message));
+    return { regalo, venceAt: fresca.regalo.venceAt, diasRegalo: DIAS_REGALO, enPedido: yaPedido ? yaPedido.fecha : null };
 }
 
 // ---------------------------------------------------------------------------
@@ -424,7 +428,7 @@ const destinosEquipo = () => {
 const estrellas = (n) => '⭐'.repeat(n) + '☆'.repeat(5 - n);
 const NOMBRE_OPCION = Object.fromEntries(PREGUNTAS.flatMap((p) => (p.opciones || []).map((o) => [`${p.id}.${o.v}`, o.t])));
 
-function textoAviso(e) {
+function textoAviso(e, extra = {}) {
     const E = tg.escaparHTML;
     const r = e.respuestas || {};
     const l = [
@@ -448,16 +452,31 @@ function textoAviso(e) {
     }
     if (r.deseado) l.push(`🛒 Le gustaría: ${E(r.deseado)}`);
     if (r.comentario) l.push(`💬 ${E(r.comentario)}`);
-    l.push('', `🎁 Ganó: ${E(e.regalo.texto)} (se agrega solo a su próximo pedido, hasta el ${new Date(e.regalo.venceAt).toLocaleDateString('es-MX', { timeZone: 'America/Mexico_City', day: 'numeric', month: 'short' })})`);
+    l.push('', extra.pedidoExistente
+        ? `🎁 <b>Regalo: ${E(e.regalo.texto)}</b> → ya se agregó a su pedido para el <b>${E(extra.pedidoExistente.fecha)}</b> (ya estaba hecho). ⚠️ Si ese pedido ya está armado, agréguenlo a mano.`
+        : `🎁 Regalo: ${E(e.regalo.texto)} → todavía no tiene pedido; se agrega solo al próximo que haga (hasta el ${new Date(e.regalo.venceAt).toLocaleDateString('es-MX', { timeZone: 'America/Mexico_City', day: 'numeric', month: 'short' })})`);
     return l.join('\n');
 }
 
-async function avisarEquipo(e) {
+async function mandarAlEquipo(texto, silencioso) {
     if (!tg.hayToken()) return;
     for (const d of destinosEquipo()) {
-        const r = await tg.enviarMensaje({ chatId: d, texto: textoAviso(e), disableNotification: !e.mala });
+        const r = await tg.enviarMensaje({ chatId: d, texto, disableNotification: silencioso });
         if (!r.ok) console.log(`Encuestas: no pude avisar a ${d}: ${r.desc || r.tipo}`);
     }
+}
+const avisarEquipo = (e, extra) => mandarAlEquipo(textoAviso(e, extra), !e.mala);
+
+/** Aviso cuando el regalo entra en un pedido nuevo (para que lo pongan al armar). */
+async function avisarRegaloAplicado(encuesta, pedido) {
+    const E = tg.escaparHTML;
+    await mandarAlEquipo([
+        '🎁 <b>Regalo de encuesta en un pedido</b>',
+        '',
+        `👤 ${E(pedido.cliente || encuesta.nombre || '')} · ${E(encuesta.telefono)}`,
+        `📦 Pedido para el ${E(pedido.fecha || '')}`,
+        `➕ ${E(encuesta.regalo.texto)} (ya va anotado en el pedido)`,
+    ].join('\n'), false);
 }
 
 // ---------------------------------------------------------------------------
@@ -478,6 +497,36 @@ async function reclamarRegalo(telefono) {
     ).lean();
 }
 const confirmarRegalo = (encuestaId, pedidoId) => Encuesta.updateOne({ _id: encuestaId }, { $set: { 'regalo.pedidoId': pedidoId } });
+
+/** Pedido ya hecho del cliente que todavía no se entrega (entrega hoy o después). */
+async function pedidoPorEntregar(telefono) {
+    const t = tel10(telefono);
+    if (!t) return null;
+    const hoy = hoyMX();
+    const ps = await Pedido.find(
+        { telefono: { $regex: `${t}$` }, createdAt: { $gte: new Date(Date.now() - 14 * 864e5) } },
+        { fecha: 1, despensa: 1, regaloPromo: 1, cliente: 1, createdAt: 1 },
+    ).lean();
+    return ps.map((p) => ({ ...p, iso: fechaAISO(p.fecha) }))
+        .filter((p) => p.iso && p.iso >= hoy && !/^reposicion$/i.test(String(p.despensa || '').trim()))
+        .sort((a, b) => a.iso.localeCompare(b.iso) || new Date(a.createdAt) - new Date(b.createdAt))[0] || null;
+}
+
+/** Pone el regalo pendiente en un pedido ya hecho, si lo hay. Devuelve el pedido o null. */
+async function aplicarAPedidoExistente(encuestaId, telefono) {
+    const p = await pedidoPorEntregar(telefono);
+    if (!p) return null;
+    const e = await Encuesta.findOneAndUpdate(
+        { _id: encuestaId, 'regalo.estado': 'pendiente' },
+        { $set: { 'regalo.estado': 'aplicado', 'regalo.aplicadoAt': new Date(), 'regalo.pedidoId': p._id } },
+        { new: true },
+    ).lean();
+    if (!e) return null;
+    const texto = `${e.regalo.texto} (encuesta)`;
+    await Pedido.updateOne({ _id: p._id }, { $set: { regaloPromo: p.regaloPromo ? `${p.regaloPromo}, ${texto}` : texto } });
+    console.log(`🎁 Regalo de encuesta agregado al pedido ya hecho ${p._id}`);
+    return p;
+}
 const devolverRegalo = (encuestaId) => Encuesta.updateOne({ _id: encuestaId }, { $set: { 'regalo.estado': 'pendiente', 'regalo.aplicadoAt': null } });
 
 /** Regalo pendiente de un cliente (para avisar en el panel al capturar). */
@@ -530,7 +579,7 @@ module.exports = {
     fechaAISO, hoyMX, sumarDias,
     candidatos, productosDe, enviarRango, estadoEnvio, programarEnvioDiario,
     paraContestar, contestar, preguntasPara,
-    reclamarRegalo, confirmarRegalo, devolverRegalo, regaloPendiente,
+    reclamarRegalo, confirmarRegalo, devolverRegalo, regaloPendiente, avisarRegaloAplicado, pedidoPorEntregar,
     resumen, regaloActual, leerConfig,
     _pruebas: { limpiarRespuestas, motivosDeMala, textoAviso },
 };

@@ -11,7 +11,7 @@ const notifyPassUpdate = require('../utils/pushApple');
 const { notifyGoogleWalletUpdate } = require('../utils/pushGoogle');
 const { sendOrderConfirmationEmail } = require('../utils/emailService');
 const { reclamarPromociones } = require('../utils/promociones');
-const { reclamarRegalo: reclamarRegaloEncuesta, confirmarRegalo: confirmarRegaloEncuesta, devolverRegalo: devolverRegaloEncuesta } = require('../utils/encuestas');
+const { reclamarRegalo: reclamarRegaloEncuesta, confirmarRegalo: confirmarRegaloEncuesta, devolverRegalo: devolverRegaloEncuesta, avisarRegaloAplicado } = require('../utils/encuestas');
 const { envioPorColonia } = require('./coloniasEnvio');
 const { inferEnvioPrincipal } = require('../utils/envioZonas');
 
@@ -540,6 +540,7 @@ router.post('/new', async (req, res) => {
         console.log("✅ Pedido guardado ID:", savedPedido._id);
         if (regaloEncuesta) {
             await confirmarRegaloEncuesta(regaloEncuesta._id, savedPedido._id).catch(() => {});
+            avisarRegaloAplicado(regaloEncuesta, savedPedido).catch(() => {});
             console.log(`🎁 Regalo de encuesta en el pedido ${savedPedido._id}: ${regaloEncuesta.regalo.texto}`);
         }
 
