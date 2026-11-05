@@ -121,14 +121,24 @@ async function sendBulkBackground(users, subject, body, opciones) {
 const { requireAdmin } = require('../utils/adminMiddleware');
 const correoSemanal = require('../utils/correoSemanal');
 
-const datosSemanal = (b = {}) => ({
-    asunto: String(b.asunto || '').trim().slice(0, 150),
-    intro: String(b.intro || '').slice(0, 1500),
-    promoImg: /^https:\/\//.test(String(b.promoImg || '')) ? String(b.promoImg) : '',
-    conDespensas: b.conDespensas !== false,
-    excluirPueblos: b.excluirPueblos === true,
-    campana: String(b.campana || '').replace(/[^a-z0-9-]/gi, '').slice(0, 40) || 'semana',
-});
+const esUrl = (u) => /^https:\/\//.test(String(u || ''));
+const datosSemanal = (b = {}) => {
+    // Plantillas viejas traen una sola imagen en promoImg.
+    const imagenes = (Array.isArray(b.imagenes) ? b.imagenes : [b.promoImg]).filter(esUrl).map(String).slice(0, 4);
+    const bt = b.botones || {};
+    return {
+        plantilla: b.plantilla === 'promos' ? 'promos' : 'despensas',
+        asunto: String(b.asunto || '').trim().slice(0, 150),
+        intro: String(b.intro || '').slice(0, 1500),
+        imagenes,
+        aviso: String(b.aviso || '').trim().slice(0, 200),
+        botones: { tienda: bt.tienda === true, whatsapp: bt.whatsapp === true, telegram: bt.telegram === true },
+        conDespensas: b.conDespensas === true,
+        excluirPueblos: b.excluirPueblos === true,
+        soloSinPedido: b.soloSinPedido === true,
+        campana: String(b.campana || '').replace(/[^a-z0-9-]/gi, '').slice(0, 40) || 'semana',
+    };
+};
 
 router.post('/semanal/vista-previa', requireAdmin, async (req, res) => {
     try { res.json(await correoSemanal.vistaPrevia(datosSemanal(req.body))); } catch (e) { res.status(500).json({ error: e.message }); }
@@ -146,10 +156,10 @@ router.post('/semanal/prueba', requireAdmin, async (req, res) => {
 router.post('/semanal/enviar', requireAdmin, async (req, res) => {
     const d = datosSemanal(req.body);
     if (!d.asunto) return res.status(400).json({ error: 'Escribe el asunto' });
-    if (!d.promoImg && !d.conDespensas) return res.status(400).json({ error: 'El correo va vacío: sube la imagen o incluye las despensas' });
+    if (!d.imagenes.length && !d.conDespensas) return res.status(400).json({ error: 'El correo va vacío: sube una imagen o incluye las despensas' });
     try {
         const r = await correoSemanal.enviar({ ...d, creadoPor: req.admin?.usuario });
-        const { campana, ...plantilla } = d;
+        const { campana, soloSinPedido, ...plantilla } = d;
         await guardarPlantilla(plantilla).catch(() => {});
         console.log(`📰 Correo de la semana "${d.asunto}" a ${r.total}, por ${req.admin?.usuario || 'admin'}`);
         res.json(r);
@@ -158,18 +168,19 @@ router.post('/semanal/enviar', requireAdmin, async (req, res) => {
 
 // Plantilla: lo último que se guardó o mandó, para reusarlo la siguiente semana.
 const Config = require('../models/Config');
-const CLAVE_PLANTILLA = 'correoSemanalPlantilla';
-const guardarPlantilla = (d) => Config.updateOne({ key: CLAVE_PLANTILLA }, { $set: { value: JSON.stringify(d), updatedAt: new Date() } }, { upsert: true });
+// Una por tipo: despensas (lunes) y promos (miércoles/jueves).
+const clavePlantilla = (tipo) => (tipo === 'promos' ? 'correoPromosPlantilla' : 'correoSemanalPlantilla');
+const guardarPlantilla = (d) => Config.updateOne({ key: clavePlantilla(d.plantilla) }, { $set: { value: JSON.stringify(d), updatedAt: new Date() } }, { upsert: true });
 
 router.get('/semanal/plantilla', requireAdmin, async (req, res) => {
-    const c = await Config.findOne({ key: CLAVE_PLANTILLA }).lean();
+    const c = await Config.findOne({ key: clavePlantilla(req.query.tipo) }).lean();
     let plantilla = null;
     try { plantilla = c ? JSON.parse(c.value) : null; } catch (_) { /* plantilla dañada: se ignora */ }
     res.json(plantilla ? { ...plantilla, guardadaAt: c.updatedAt } : null);
 });
 
 router.put('/semanal/plantilla', requireAdmin, async (req, res) => {
-    const { campana, ...d } = datosSemanal(req.body);
+    const { campana, soloSinPedido, ...d } = datosSemanal(req.body);
     await guardarPlantilla(d);
     res.json({ ok: true });
 });
